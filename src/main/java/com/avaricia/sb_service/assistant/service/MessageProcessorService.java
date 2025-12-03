@@ -346,12 +346,30 @@ public class MessageProcessorService {
 
     /**
      * Handles listing user transactions with optional type filter.
+     * Now uses the API filter parameter instead of filtering in memory.
      */
     @SuppressWarnings("unchecked")
     private String handleListTransactions(String userId, IntentResult intent) {
-        Map<String, Object> result = useMock
-            ? mockCoreApi.getTransactions(userId)
-            : coreApi.getTransactions(userId);
+        String filterType = intent.getType();
+        
+        // Use API filter if not in mock mode and type is specified
+        Map<String, Object> result;
+        if (useMock) {
+            result = mockCoreApi.getTransactions(userId);
+            // Filter in memory for mock mode
+            if (filterType != null && result.containsKey("data")) {
+                List<Map<String, Object>> allTx = (List<Map<String, Object>>) result.get("data");
+                if (allTx != null) {
+                    List<Map<String, Object>> filtered = allTx.stream()
+                        .filter(tx -> filterType.equals(tx.get("type")))
+                        .toList();
+                    result.put("data", filtered);
+                }
+            }
+        } else {
+            // Use API filter parameter (implemented by Brahiam)
+            result = coreApi.getTransactions(userId, filterType);
+        }
         
         if (result.containsKey("error")) {
             return "❌ No pude obtener las transacciones. " + result.get("error");
@@ -360,20 +378,11 @@ public class MessageProcessorService {
         List<Map<String, Object>> transactions = (List<Map<String, Object>>) result.get("data");
         
         if (transactions == null || transactions.isEmpty()) {
-            return "📋 No tienes transacciones registradas aún." + (useMock ? "\n\n🧪 _[Modo prueba]_" : "");
-        }
-        
-        // Filter by type if specified
-        String filterType = intent.getType();
-        if (filterType != null) {
-            transactions = transactions.stream()
-                .filter(tx -> filterType.equals(tx.get("type")))
-                .toList();
-                
-            if (transactions.isEmpty()) {
+            if (filterType != null) {
                 String typeText = "Income".equals(filterType) ? "ingresos" : "gastos";
-                return "📋 No tienes " + typeText + " registrados.";
+                return "📋 No tienes " + typeText + " registrados." + (useMock ? "\n\n🧪 _[Modo prueba]_" : "");
             }
+            return "📋 No tienes transacciones registradas aún." + (useMock ? "\n\n🧪 _[Modo prueba]_" : "");
         }
         
         String title = filterType == null ? "Tus últimas transacciones" :
@@ -390,7 +399,8 @@ public class MessageProcessorService {
             Object amount = tx.get("amount");
             String category = (String) tx.get("category");
             String description = (String) tx.get("description");
-            String dateStr = tx.get("date") != null ? formatDateFromApi((String) tx.get("date")) : "";
+            // Try both 'createdAt' (from Brahiam's API) and 'date' (fallback)
+            String dateStr = extractDateFromTransaction(tx);
             
             // Format: 💸 $10,000 - gaseosa (Otros) - 02/12/2025
             String descText = description != null && !description.isEmpty() ? description : category;
@@ -404,6 +414,23 @@ public class MessageProcessorService {
         }
         
         return sb.toString();
+    }
+    
+    /**
+     * Extracts and formats the date from a transaction.
+     * Handles both 'createdAt' (from Brahiam's API) and 'date' field names.
+     */
+    private String extractDateFromTransaction(Map<String, Object> tx) {
+        // Try createdAt first (Brahiam's API uses this)
+        Object dateObj = tx.get("createdAt");
+        if (dateObj == null) {
+            // Fallback to date field
+            dateObj = tx.get("date");
+        }
+        if (dateObj == null) {
+            return "";
+        }
+        return formatDateFromApi(dateObj.toString());
     }
 
     /**
@@ -664,7 +691,8 @@ public class MessageProcessorService {
             String emoji = "Expense".equals(type) ? "💸" : "💰";
             String category = (String) tx.get("category");
             String description = (String) tx.get("description");
-            String dateStr = tx.get("date") != null ? formatDateFromApi((String) tx.get("date")) : "";
+            // Use extractDateFromTransaction to handle both createdAt and date fields
+            String dateStr = extractDateFromTransaction(tx);
             
             // Format: 💸 $10,000 - gaseosa (Otros) - 02/12/2025
             String descText = description != null && !description.isEmpty() ? description : category;
@@ -737,8 +765,7 @@ public class MessageProcessorService {
             String emoji = "Expense".equals(type) ? "💸" : "💰";
             Object amount = tx.get("amount");
             String description = (String) tx.get("description");
-            String createdAt = (String) tx.get("createdAt");
-            String dateStr = createdAt != null ? formatDate(createdAt.substring(0, 10)) : "";
+            String dateStr = extractDateFromTransaction(tx);
             
             sb.append(String.format("%s $%s - %s %s\n", emoji, amount, description, dateStr));
         }

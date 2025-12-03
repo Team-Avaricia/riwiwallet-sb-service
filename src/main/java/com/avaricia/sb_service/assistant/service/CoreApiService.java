@@ -126,6 +126,20 @@ public class CoreApiService {
         return getRequest(url);
     }
 
+    /**
+     * Get transactions with optional type filter.
+     * @param userId The user ID
+     * @param type Optional filter: "Income" or "Expense". Null returns all transactions.
+     * @return Map containing the transactions data
+     */
+    public Map<String, Object> getTransactions(String userId, String type) {
+        String url = baseUrl + "/api/Transaction/user/" + userId;
+        if (type != null && !type.isEmpty()) {
+            url += "?type=" + type;
+        }
+        return getRequest(url);
+    }
+
     public Map<String, Object> getTransactionById(String transactionId) {
         String url = baseUrl + "/api/Transaction/" + transactionId;
         return getRequest(url);
