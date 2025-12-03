@@ -12,7 +12,7 @@
 	<artifactId>sb-service</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>sb-service</name>
-	<description>Demo project for Spring Boot</description>
+	<description>RiwiWallet - AI Financial Assistant Microservice</description>
 	<url/>
 	<licenses>
 		<license/>
