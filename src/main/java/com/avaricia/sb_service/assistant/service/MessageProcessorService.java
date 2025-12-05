@@ -804,7 +804,7 @@ public class MessageProcessorService {
     }
 
     /**
-     * Handles getting expense summary by category.
+     * Handles getting complete financial summary including income and expenses.
      */
     @SuppressWarnings("unchecked")
     private String handleGetSummary(String userId, IntentResult intent) {
@@ -812,11 +812,26 @@ public class MessageProcessorService {
             return "📊 Función disponible solo con el API real.\n\n🧪 _[Modo prueba]_";
         }
         
+        StringBuilder sb = new StringBuilder("📊 *Resumen financiero completo:*\n\n");
+        
+        // 1. Get balance info (total income and expenses)
+        Map<String, Object> balanceResult = coreApi.getUserBalance(userId);
+        
+        if (!balanceResult.containsKey("error")) {
+            Double totalIncome = balanceResult.get("totalIncome") != null ? ((Number) balanceResult.get("totalIncome")).doubleValue() : 0.0;
+            Double totalExpenses = balanceResult.get("totalExpenses") != null ? ((Number) balanceResult.get("totalExpenses")).doubleValue() : 0.0;
+            Double currentBalance = balanceResult.get("currentBalance") != null ? ((Number) balanceResult.get("currentBalance")).doubleValue() : 0.0;
+            
+            sb.append("💰 *Ingresos totales:* $").append(String.format("%,.0f", totalIncome)).append("\n");
+            sb.append("💸 *Gastos totales:* $").append(String.format("%,.0f", totalExpenses)).append("\n");
+            sb.append("💵 *Saldo actual:* $").append(String.format("%,.0f", currentBalance)).append("\n\n");
+        }
+        
+        // 2. Get expenses by category
         Map<String, Object> result;
         String startDate = intent.getStartDate();
         String endDate = intent.getEndDate();
         
-        // If dates provided, use them; otherwise call without dates (returns all history)
         if (startDate != null && endDate != null) {
             result = coreApi.getTransactionSummaryByCategory(userId, startDate, endDate);
         } else {
@@ -824,28 +839,25 @@ public class MessageProcessorService {
         }
         
         if (result.containsKey("error")) {
-            return "❌ No pude obtener el resumen. " + result.get("error");
+            return sb.toString() + "❌ No pude obtener el desglose por categoría.";
         }
         
         List<Map<String, Object>> categories = (List<Map<String, Object>>) result.get("data");
-        Double grandTotal = result.get("grandTotal") != null ? ((Number) result.get("grandTotal")).doubleValue() : 0.0;
         
-        if (categories == null || categories.isEmpty()) {
-            return "📊 No tienes gastos registrados para mostrar un resumen.";
-        }
-        
-        StringBuilder sb = new StringBuilder("📊 *Resumen de gastos por categoría:*\n\n");
-        
-        for (Map<String, Object> cat : categories) {
-            String category = (String) cat.get("category");
-            Double totalAmount = ((Number) cat.get("totalAmount")).doubleValue();
-            Double percentage = cat.get("percentage") != null ? ((Number) cat.get("percentage")).doubleValue() : 0.0;
+        if (categories != null && !categories.isEmpty()) {
+            sb.append("📉 *Desglose de gastos:*\n");
             
-            String bar = generateProgressBar(percentage);
-            sb.append(String.format("• %s: $%,.0f (%s %.1f%%)\n", category, totalAmount, bar, percentage));
+            for (Map<String, Object> cat : categories) {
+                String category = (String) cat.get("category");
+                Double totalAmount = ((Number) cat.get("totalAmount")).doubleValue();
+                Double percentage = cat.get("percentage") != null ? ((Number) cat.get("percentage")).doubleValue() : 0.0;
+                
+                String bar = generateProgressBar(percentage);
+                sb.append(String.format("• %s: $%,.0f (%s %.1f%%)\n", category, totalAmount, bar, percentage));
+            }
+        } else {
+            sb.append("📋 No tienes gastos registrados aún.");
         }
-        
-        sb.append(String.format("\n💵 *Total:* $%,.0f", grandTotal));
         
         return sb.toString();
     }
