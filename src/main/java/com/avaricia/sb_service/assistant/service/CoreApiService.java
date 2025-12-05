@@ -85,6 +85,17 @@ public class CoreApiService {
         return getRequest(url);
     }
 
+    /**
+     * Get user's Telegram ID from their user ID.
+     * Used for sending notifications to users.
+     * @param userId The user's system ID
+     * @return Map containing telegramId field if user has linked Telegram
+     */
+    public Map<String, Object> getTelegramIdByUserId(String userId) {
+        String url = baseUrl + "/api/User/" + userId + "/telegram";
+        return getRequest(url);
+    }
+
     // ==================== SPENDING VALIDATION ENDPOINTS ====================
 
     public Map<String, Object> validateExpense(String userId, Double amount, String category, String description) {
@@ -230,6 +241,10 @@ public class CoreApiService {
                                                            String frequency, Integer dayOfMonth) {
         String url = baseUrl + "/api/RecurringTransaction";
         
+        // Format dates as ISO timestamp (required by Brahiam's API)
+        String now = java.time.LocalDateTime.now().toString();
+        String farFuture = java.time.LocalDateTime.now().plusYears(10).toString();
+        
         Map<String, Object> body = new HashMap<>();
         body.put("userId", userId);
         body.put("amount", amount);
@@ -237,12 +252,10 @@ public class CoreApiService {
         body.put("category", category);
         body.put("description", description);
         body.put("frequency", frequency);
-        body.put("startDate", java.time.LocalDate.now().toString());
-        body.put("isActive", true);
-        
-        if (dayOfMonth != null) {
-            body.put("dayOfMonth", dayOfMonth);
-        }
+        body.put("startDate", now);
+        body.put("endDate", farFuture); // Required by API - set to far future for "indefinite"
+        body.put("dayOfMonth", dayOfMonth != null ? dayOfMonth : 1);
+        body.put("dayOfWeek", 1); // Default to Monday if weekly
         
         return postRequest(url, body);
     }

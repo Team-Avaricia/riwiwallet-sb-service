@@ -210,12 +210,66 @@ public class UserMappingService {
         return telegramToUserIdCache.containsKey(telegramId);
     }
 
+    /**
+     * Get Telegram ID from user ID.
+     * First checks the in-memory cache, then falls back to Core API.
+     * @param userId The system user ID
+     * @return The Telegram ID if found, null otherwise
+     */
     public Long getTelegramId(String userId) {
-        return telegramToUserIdCache.entrySet().stream()
+        // First check in-memory cache (reverse lookup)
+        Long cachedTelegramId = telegramToUserIdCache.entrySet().stream()
                 .filter(entry -> entry.getValue().equals(userId))
                 .map(Map.Entry::getKey)
                 .findFirst()
                 .orElse(null);
+        
+        if (cachedTelegramId != null) {
+            System.out.println("📱 Found Telegram ID in cache for user " + userId + ": " + cachedTelegramId);
+            return cachedTelegramId;
+        }
+        
+        // If not in cache and not using mock, try to get from API
+        if (!useMock) {
+            Map<String, Object> result = coreApi.getTelegramIdByUserId(userId);
+            
+            if (!result.containsKey("error")) {
+                Long telegramId = extractTelegramId(result);
+                if (telegramId != null) {
+                    // Cache the result for future lookups
+                    telegramToUserIdCache.put(telegramId, userId);
+                    System.out.println("📱 Found Telegram ID from API for user " + userId + ": " + telegramId);
+                    return telegramId;
+                }
+            }
+        }
+        
+        System.out.println("⚠️ No Telegram ID found for user: " + userId);
+        return null;
+    }
+    
+    /**
+     * Extract Telegram ID from API response.
+     */
+    private Long extractTelegramId(Map<String, Object> result) {
+        String[] possibleFields = {"telegramId", "TelegramId", "telegram_id"};
+        
+        for (String field : possibleFields) {
+            if (result.containsKey(field)) {
+                Object id = result.get(field);
+                if (id != null) {
+                    if (id instanceof Number) {
+                        return ((Number) id).longValue();
+                    }
+                    try {
+                        return Long.parseLong(id.toString());
+                    } catch (NumberFormatException e) {
+                        // Continue to next field
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     public void clearCache() {
