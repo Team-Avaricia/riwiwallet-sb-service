@@ -15,12 +15,16 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
+// Parche Steve para evitar problemas con PostgreSQL
+import java.util.Random;
+
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
 @Table(name = "\"Users\"")
+
 public class User implements UserDetails {
 
     @Id
@@ -97,12 +101,29 @@ public class User implements UserDetails {
         return true;
     }
 
+    // Parche Steve para evitar problemas con PostgreSQL
+    public String ramdomizePhoneNumber() {
+        Random random = new Random();
+        StringBuilder phoneNumber = new StringBuilder("+57 ");
+        for (int i = 0; i < 10; i++) {
+            phoneNumber.append(random.nextInt(10));
+        }
+        return phoneNumber.toString();
+    }
+
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();
         updatedAt = OffsetDateTime.now();
         if (currentBalance == null) {
             currentBalance = BigDecimal.ZERO;
+        }
+        // Parche Steve para evitar problemas con PostgreSQL
+        if (phoneNumber == null) {
+            phoneNumber = ramdomizePhoneNumber();
+        }
+        if (telegramUsername == null) {
+            telegramUsername = ramdomizePhoneNumber();
         }
     }
 
