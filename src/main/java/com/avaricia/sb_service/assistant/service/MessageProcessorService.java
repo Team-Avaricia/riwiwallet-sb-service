@@ -64,6 +64,7 @@ public class MessageProcessorService {
         
         // 4. Execute the corresponding action(s)
         String response;
+        String mainIntent = intents.get(0).getIntent();
         if (intents.size() == 1) {
             // Single operation
             response = executeIntent(userId, intents.get(0));
@@ -72,7 +73,10 @@ public class MessageProcessorService {
             response = executeMultipleIntents(userId, intents);
         }
         
-        // 5. Save assistant response to history
+        // 5. Humanize the response using AI (for data-rich responses)
+        response = humanizeIfNeeded(response, message, mainIntent);
+        
+        // 6. Save assistant response to history
         conversationHistory.addAssistantMessage(telegramId, response);
         
         System.out.println("💬 Conversation history size: " + conversationHistory.getHistorySize(telegramId) + " messages");
@@ -81,19 +85,77 @@ public class MessageProcessorService {
     }
     
     /**
+     * Humanizes the response if it's a data-rich response that could benefit from a more conversational tone.
+     */
+    private String humanizeIfNeeded(String response, String userQuery, String intent) {
+        // List of intents that benefit from humanization
+        List<String> humanizeIntents = List.of(
+            "get_balance", 
+            "get_summary", 
+            "list_transactions", 
+            "list_transactions_by_range",
+            "list_transactions_by_date",
+            "search_transactions",
+            "get_cashflow",
+            "list_recurring",
+            "list_rules"
+        );
+        
+        // Only humanize for specific intents and non-error responses
+        if (humanizeIntents.contains(intent) && !response.startsWith("❌") && response.length() > 50) {
+            try {
+                return intentClassifier.humanizeResponse(response, userQuery, intent);
+            } catch (Exception e) {
+                System.err.println("⚠️ Humanization failed, using original response: " + e.getMessage());
+                return response;
+            }
+        }
+        
+        return response;
+    }
+    
+    /**
      * Executes multiple intents and combines the responses.
+     * Now builds a detailed response listing ALL operations.
      */
     private String executeMultipleIntents(String userId, List<IntentResult> intents) {
         StringBuilder combinedResponse = new StringBuilder();
         
-        // Use the response from the first intent (which should summarize all operations)
-        String summaryResponse = intents.get(0).getResponse();
-        if (summaryResponse != null && !summaryResponse.isEmpty()) {
-            combinedResponse.append(summaryResponse).append("\n\n");
+        // First, count valid operations (those with amount > 0)
+        int validOperationCount = 0;
+        for (IntentResult intent : intents) {
+            Double amount = intent.getAmount();
+            if (amount != null && amount > 0) {
+                validOperationCount++;
+            }
         }
         
+        // Build header with correct count
+        combinedResponse.append("📝 *Registrando ").append(validOperationCount).append(" operaciones:*\n\n");
+        
+        // List all valid operations before executing
+        int opNumber = 0;
+        for (IntentResult intent : intents) {
+            String emoji = getOperationEmoji(intent);
+            String typeText = getOperationTypeText(intent);
+            Double amount = intent.getAmount();
+            String description = intent.getDescription() != null ? intent.getDescription() : intent.getCategory();
+            
+            if (amount != null && amount > 0) {
+                opNumber++;
+                combinedResponse.append(String.format("%d. %s %s de $%,.0f", opNumber, emoji, typeText, amount));
+                if (description != null && !description.isEmpty()) {
+                    combinedResponse.append(" - ").append(description);
+                }
+                combinedResponse.append("\n");
+            }
+        }
+        combinedResponse.append("\n");
+        
+        // Execute all operations
         int successCount = 0;
         int failCount = 0;
+        StringBuilder errors = new StringBuilder();
         
         for (int i = 0; i < intents.size(); i++) {
             IntentResult intent = intents.get(i);
@@ -103,24 +165,59 @@ public class MessageProcessorService {
                 String result = executeIntentSilent(userId, intent);
                 if (result.startsWith("❌")) {
                     failCount++;
-                    combinedResponse.append("❌ Op ").append(i + 1).append(": ").append(result).append("\n");
+                    errors.append("❌ Op ").append(i + 1).append(": ").append(result).append("\n");
                 } else {
                     successCount++;
                 }
             } catch (Exception e) {
                 failCount++;
-                combinedResponse.append("❌ Error en operación ").append(i + 1).append(": ").append(e.getMessage()).append("\n");
+                errors.append("❌ Error en operación ").append(i + 1).append(": ").append(e.getMessage()).append("\n");
             }
+        }
+        
+        // Add errors if any
+        if (errors.length() > 0) {
+            combinedResponse.append(errors);
         }
         
         // Add summary at the end
         if (failCount == 0) {
-            combinedResponse.append("\n✅ ").append(successCount).append(" operación(es) completada(s) exitosamente.");
+            combinedResponse.append("✅ ¡").append(successCount).append(" operación(es) registrada(s) exitosamente!");
         } else {
-            combinedResponse.append("\n⚠️ ").append(successCount).append(" exitosa(s), ").append(failCount).append(" fallida(s).");
+            combinedResponse.append("⚠️ ").append(successCount).append(" exitosa(s), ").append(failCount).append(" fallida(s).");
         }
         
         return combinedResponse.toString().trim();
+    }
+    
+    /**
+     * Gets the emoji for an operation based on intent type.
+     */
+    private String getOperationEmoji(IntentResult intent) {
+        String intentType = intent.getIntent();
+        if (intentType == null) return "📋";
+        
+        return switch (intentType) {
+            case "create_expense", "create_recurring_expense" -> "💸";
+            case "create_income", "create_recurring_income" -> "💰";
+            default -> "📋";
+        };
+    }
+    
+    /**
+     * Gets the type text for an operation.
+     */
+    private String getOperationTypeText(IntentResult intent) {
+        String intentType = intent.getIntent();
+        if (intentType == null) return "Operación";
+        
+        return switch (intentType) {
+            case "create_expense" -> "Gasto";
+            case "create_income" -> "Ingreso";
+            case "create_recurring_expense" -> "Gasto fijo";
+            case "create_recurring_income" -> "Ingreso fijo";
+            default -> "Operación";
+        };
     }
     
     /**
@@ -219,7 +316,7 @@ public class MessageProcessorService {
                     return handleGetCashflow(userId);
                     
                 case "list_recurring":
-                    return handleListRecurring(userId);
+                    return handleListRecurring(userId, intent);
                     
                 case "delete_recurring":
                     return handleDeleteRecurring(userId, intent);
@@ -262,8 +359,22 @@ public class MessageProcessorService {
         
         // Build a helpful response based on the question
         StringBuilder response = new StringBuilder();
-        response.append("🤔 *Sobre gastar $").append(String.format("%,.0f", intent.getAmount()));
-        response.append(" en ").append(intent.getCategory()).append(":*\n\n");
+        
+        // Handle null/missing amount
+        Double amount = intent.getAmount();
+        if (amount == null || amount <= 0) {
+            return "🤔 ¿Cuánto estás pensando gastar? Por favor especifica el monto.\n\n" +
+                   "💡 Ejemplo: \"¿Puedo gastar 50000 en ropa?\"";
+        }
+        
+        // Handle null/missing category - replace with descriptive text
+        String category = intent.getCategory();
+        if (category == null || category.isEmpty() || category.equalsIgnoreCase("null")) {
+            category = "eso";
+        }
+        
+        response.append("🤔 *Sobre gastar $").append(String.format("%,.0f", amount));
+        response.append(" en ").append(category).append(":*\n\n");
         
         // Check if user has rules for this category
         boolean hasRule = false;
@@ -296,13 +407,17 @@ public class MessageProcessorService {
             }
         } else {
             // No specific rule, give general advice
-            response.append("📊 No tienes un límite configurado para ").append(intent.getCategory()).append(".\n\n");
+            response.append("📊 No tienes un límite configurado para ").append(category).append(".\n\n");
             response.append("💡 *Consejos antes de gastar:*\n");
             response.append("• ¿Es una necesidad o un gusto?\n");
             response.append("• ¿Afecta tus metas de ahorro?\n");
             response.append("• ¿Tienes un fondo de emergencia?\n\n");
-            response.append("Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", intent.getAmount()));
-            response.append(" en ").append(intent.getDescription() != null ? intent.getDescription() : intent.getCategory()).append("\"");
+            String whatToSay = intent.getDescription() != null ? intent.getDescription() : category;
+            if (whatToSay.equals("eso")) {
+                whatToSay = "[categoría]";
+            }
+            response.append("Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", amount));
+            response.append(" en ").append(whatToSay).append("\"");
         }
         
         String modeIndicator = useMock ? "\n\n🧪 _[Modo prueba - No se registró ningún gasto]_" : "";
@@ -312,11 +427,43 @@ public class MessageProcessorService {
 
     /**
      * Handles transaction creation (expense or income).
+     * Now includes default values for category and description when not provided.
+     * Also validates that amount is valid before calling the API.
      */
     private String handleCreateTransaction(String userId, IntentResult intent, String type) {
+        // VALIDATION: Check that amount exists and is greater than 0
+        Double amount = intent.getAmount();
+        if (amount == null) {
+            String typeText = "Expense".equals(type) ? "gasto" : "ingreso";
+            return "🤔 ¿Cuánto fue el " + typeText + "? Por favor dime el monto.\n\n" +
+                   "💡 Ejemplo: \"Gasté 50000 en comida\" o \"Recibí 100k\"";
+        }
+        
+        if (amount <= 0) {
+            return "🤔 El monto debe ser mayor a $0. ¿Cuánto fue realmente?";
+        }
+        
+        // Warning for extremely high amounts (>100 billion - likely typo)
+        // Allow the transaction but log a warning
+        if (amount > 100_000_000_000.0) {
+            System.out.println("⚠️ WARNING: Extremely high amount detected: " + amount);
+        }
+        
+        // Set default category if not provided
+        String category = intent.getCategory();
+        if (category == null || category.isEmpty()) {
+            category = "Otros";
+        }
+        
+        // Set default description if not provided
+        String description = intent.getDescription();
+        if (description == null || description.isEmpty()) {
+            description = "Expense".equals(type) ? "Gasto registrado" : "Ingreso registrado";
+        }
+        
         Map<String, Object> result = useMock
-            ? mockCoreApi.createTransaction(userId, intent.getAmount(), type, intent.getCategory(), intent.getDescription())
-            : coreApi.createTransaction(userId, intent.getAmount(), type, intent.getCategory(), intent.getDescription());
+            ? mockCoreApi.createTransaction(userId, amount, type, category, description)
+            : coreApi.createTransaction(userId, amount, type, category, description);
         
         if (result.containsKey("error")) {
             return "❌ No pude registrar la transacción. " + result.get("error");
@@ -336,9 +483,9 @@ public class MessageProcessorService {
         return String.format("%s %s registrado!\n• Monto: $%,.0f\n• Categoría: %s\n• Descripción: %s%s%s",
             emoji,
             typeText,
-            intent.getAmount(),
-            intent.getCategory(),
-            intent.getDescription(),
+            amount,
+            category,
+            description,
             balanceInfo,
             modeIndicator
         );
@@ -385,16 +532,25 @@ public class MessageProcessorService {
             return "📋 No tienes transacciones registradas aún." + (useMock ? "\n\n🧪 _[Modo prueba]_" : "");
         }
         
-        String title = filterType == null ? "Tus últimas transacciones" :
-            ("Income".equals(filterType) ? "Tus últimos ingresos" : "Tus últimos gastos");
+        String title = filterType == null ? "Tus transacciones" :
+            ("Income".equals(filterType) ? "Tus ingresos" : "Tus gastos");
         
         StringBuilder sb = new StringBuilder("📋 *" + title + ":*\n\n");
         int count = 0;
+        int maxToShow = 15; // Show up to 15 transactions
+        double totalIncome = 0;
+        double totalExpense = 0;
         
         for (Map<String, Object> tx : transactions) {
-            if (count >= 5) break; // Show only the last 5
-            
             String type = (String) tx.get("type");
+            double amt = ((Number) tx.get("amount")).doubleValue();
+            
+            // Count totals for all transactions
+            if ("Income".equals(type)) totalIncome += amt;
+            else totalExpense += amt;
+            
+            if (count >= maxToShow) continue; // Count all but only show maxToShow
+            
             String emoji = "Expense".equals(type) ? "💸" : "💰";
             Object amount = tx.get("amount");
             String category = (String) tx.get("category");
@@ -407,6 +563,26 @@ public class MessageProcessorService {
             sb.append(String.format("%s $%,.0f - %s (%s) - %s\n", 
                 emoji, ((Number) amount).doubleValue(), descText, category, dateStr));
             count++;
+        }
+        
+        // Show how many more if truncated
+        if (transactions.size() > maxToShow) {
+            sb.append(String.format("\n... y %d transacciones más\n", transactions.size() - maxToShow));
+        }
+        
+        // Add summary - different format based on filter type
+        if (filterType == null) {
+            // All transactions - show full summary with balance
+            sb.append(String.format("\n📊 *Resumen:*\n• Total: %d transacciones\n• 💰 Ingresos: $%,.0f\n• 💸 Gastos: $%,.0f\n• 📈 Balance: $%,.0f", 
+                transactions.size(), totalIncome, totalExpense, totalIncome - totalExpense));
+        } else if ("Income".equals(filterType)) {
+            // Only income - show just income total
+            sb.append(String.format("\n📊 *Total ingresos:* $%,.0f (%d transacciones)", 
+                totalIncome, transactions.size()));
+        } else {
+            // Only expenses - show just expense total
+            sb.append(String.format("\n📊 *Total gastos:* $%,.0f (%d transacciones)", 
+                totalExpense, transactions.size()));
         }
         
         if (useMock) {
@@ -435,6 +611,7 @@ public class MessageProcessorService {
 
     /**
      * Handles deleting the last transaction.
+     * Improved with better response formatting.
      */
     @SuppressWarnings("unchecked")
     private String handleDeleteTransaction(String userId) {
@@ -466,41 +643,63 @@ public class MessageProcessorService {
             return "❌ No pude eliminar la transacción. " + deleteResult.get("error");
         }
         
-        Object amount = lastTx.get("amount");
+        // Build a better response
+        String type = (String) lastTx.get("type");
+        String emoji = "Income".equals(type) ? "💰" : "💸";
+        Double amount = lastTx.get("amount") != null ? ((Number) lastTx.get("amount")).doubleValue() : 0.0;
+        String description = (String) lastTx.get("description");
         String category = (String) lastTx.get("category");
+        String typeText = "Income".equals(type) ? "ingreso" : "gasto";
         String modeIndicator = useMock ? "\n\n🧪 _[Modo prueba]_" : "";
         
-        return String.format("🗑️ Transacción eliminada!\n• Monto: $%s\n• Categoría: %s\n\nTu saldo ha sido actualizado.%s", 
-            amount, category, modeIndicator);
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("✅ ¡Listo! Eliminé tu último %s:\n\n", typeText));
+        sb.append(String.format("%s *$%,.0f*\n", emoji, amount));
+        
+        // Always show description if available
+        if (description != null && !description.isEmpty()) {
+            sb.append(String.format("• Descripción: %s\n", description));
+        }
+        sb.append(String.format("• Categoría: %s\n", category));
+        sb.append("\n📝 Tu saldo ha sido restaurado.");
+        sb.append(modeIndicator);
+        
+        return sb.toString();
     }
 
     private String handleCreateRule(String userId, IntentResult intent) {
+        // Handle category - default to "General" if not specified
+        String category = intent.getCategory();
+        if (category == null || category.isEmpty() || 
+            category.equalsIgnoreCase("gastos") || 
+            category.equalsIgnoreCase("todos") ||
+            category.equalsIgnoreCase("general")) {
+            category = "General";
+        }
+        
+        // Validate amount
+        Double amount = intent.getAmount();
+        if (amount == null || amount <= 0) {
+            return "❌ Por favor especifica un monto válido para el límite. Ejemplo: \"Límite de 500k en comida\"";
+        }
+        
+        String period = intent.getPeriod() != null ? intent.getPeriod() : "Monthly";
+        
         Map<String, Object> result = useMock
-            ? mockCoreApi.createRule(
-                userId,
-                "MonthlyBudget",
-                intent.getCategory(),
-                intent.getAmount(),
-                intent.getPeriod() != null ? intent.getPeriod() : "Monthly"
-            )
-            : coreApi.createRule(
-                userId,
-                "MonthlyBudget",
-                intent.getCategory(),
-                intent.getAmount(),
-                intent.getPeriod() != null ? intent.getPeriod() : "Monthly"
-            );
+            ? mockCoreApi.createRule(userId, "MonthlyBudget", category, amount, period)
+            : coreApi.createRule(userId, "MonthlyBudget", category, amount, period);
         
         if (result.containsKey("error")) {
             return "❌ No pude crear la regla. " + result.get("error");
         }
         
-        String periodText = translatePeriod(intent.getPeriod());
+        String periodText = translatePeriod(period);
         String modeIndicator = useMock ? "\n\n🧪 _[Modo prueba]_" : "";
+        String categoryText = "General".equals(category) ? "Todos los gastos" : category;
         
-        return String.format("📏 Regla creada!\n• Categoría: %s\n• Límite: $%,.0f\n• Período: %s%s",
-            intent.getCategory(),
-            intent.getAmount(),
+        return String.format("📏 ¡Regla creada!\n\n• 📂 Categoría: %s\n• 💰 Límite: $%,.0f\n• 📅 Período: %s\n\n💡 Te avisaré cuando te acerques al límite.%s",
+            categoryText,
+            amount,
             periodText,
             modeIndicator
         );
@@ -564,6 +763,16 @@ public class MessageProcessorService {
      * Handles creating recurring transactions (income or expense).
      */
     private String handleCreateRecurringTransaction(String userId, IntentResult intent, String type) {
+        // Validate amount - ask for clarification if missing
+        if (intent.getAmount() == null || intent.getAmount() <= 0) {
+            String typeText = "Income".equals(type) ? "ingreso" : "gasto";
+            String description = intent.getDescription() != null ? intent.getDescription() : "esa transacción";
+            return String.format("❓ Necesito saber el monto para registrar %s como %s recurrente.\n\n" +
+                "Por favor, indícame: \"Pago %s [MONTO] cada mes\"\n\n" +
+                "Ejemplo: \"Pago Netflix 50k cada mes\"",
+                description, typeText, description);
+        }
+        
         if (useMock) {
             String emoji = "Income".equals(type) ? "💰" : "💸";
             String typeText = "Income".equals(type) ? "Ingreso" : "Gasto";
@@ -644,6 +853,7 @@ public class MessageProcessorService {
 
     /**
      * Handles getting transactions for a date range.
+     * Now supports type filtering (Income/Expense) based on intent.
      */
     @SuppressWarnings("unchecked")
     private String handleListTransactionsByRange(String userId, IntentResult intent) {
@@ -653,27 +863,32 @@ public class MessageProcessorService {
         
         String startDate = intent.getStartDate();
         String endDate = intent.getEndDate();
+        String filterType = intent.getType(); // Get the type filter from intent
         
         if (startDate == null || endDate == null) {
             return "❌ No pude determinar el período. Por favor especifica: \"¿Cuánto gasté del 1 al 15 de noviembre?\"";
         }
         
-        Map<String, Object> result = coreApi.getTransactionsByRange(userId, startDate, endDate);
+        // Call API with type filter if specified (more efficient - filtering at DB level)
+        Map<String, Object> result = coreApi.getTransactionsByRange(userId, startDate, endDate, filterType);
         
         if (result.containsKey("error")) {
             return "❌ No pude obtener las transacciones. " + result.get("error");
         }
         
         List<Map<String, Object>> transactions = (List<Map<String, Object>>) result.get("data");
-        Double totalAmount = result.get("totalAmount") != null ? ((Number) result.get("totalAmount")).doubleValue() : 0.0;
-        Integer count = result.get("count") != null ? ((Number) result.get("count")).intValue() : 0;
         
         if (transactions == null || transactions.isEmpty()) {
-            return String.format("📆 No tienes transacciones entre %s y %s", formatDate(startDate), formatDate(endDate));
+            String typeText = filterType == null ? "transacciones" : 
+                ("Income".equals(filterType) ? "ingresos" : "gastos");
+            return String.format("📆 No tienes %s entre %s y %s", typeText, formatDate(startDate), formatDate(endDate));
         }
+        // Build title based on filter
+        String title = filterType == null ? "Transacciones" :
+            ("Income".equals(filterType) ? "Ingresos" : "Gastos");
         
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("📆 *Transacciones del %s al %s:*\n\n", formatDate(startDate), formatDate(endDate)));
+        sb.append(String.format("📆 *%s del %s al %s:*\n\n", title, formatDate(startDate), formatDate(endDate)));
         
         int shown = 0;
         double totalIncome = 0;
@@ -705,8 +920,20 @@ public class MessageProcessorService {
             sb.append(String.format("\n... y %d transacciones más\n", transactions.size() - 10));
         }
         
-        sb.append(String.format("\n📊 *Resumen:*\n• Transacciones: %d\n• 💰 Ingresos: $%,.0f\n• 💸 Gastos: $%,.0f\n• 📈 Balance: $%,.0f", 
-            transactions.size(), totalIncome, totalExpense, totalIncome - totalExpense));
+        // Add summary based on filter type
+        if (filterType == null) {
+            // All transactions - show full summary with balance
+            sb.append(String.format("\n📊 *Resumen:*\n• Transacciones: %d\n• 💰 Ingresos: $%,.0f\n• 💸 Gastos: $%,.0f\n• 📈 Balance: $%,.0f", 
+                transactions.size(), totalIncome, totalExpense, totalIncome - totalExpense));
+        } else if ("Income".equals(filterType)) {
+            // Only income - show just income total
+            sb.append(String.format("\n📊 *Total ingresos:* $%,.0f (%d transacciones)", 
+                totalIncome, transactions.size()));
+        } else {
+            // Only expenses - show just expense total
+            sb.append(String.format("\n📊 *Total gastos:* $%,.0f (%d transacciones)", 
+                totalExpense, transactions.size()));
+        }
         
         return sb.toString();
     }
@@ -805,6 +1032,7 @@ public class MessageProcessorService {
 
     /**
      * Handles getting complete financial summary including income and expenses.
+     * Now with more conversational and direct responses.
      */
     @SuppressWarnings("unchecked")
     private String handleGetSummary(String userId, IntentResult intent) {
@@ -812,19 +1040,18 @@ public class MessageProcessorService {
             return "📊 Función disponible solo con el API real.\n\n🧪 _[Modo prueba]_";
         }
         
-        StringBuilder sb = new StringBuilder("📊 *Resumen financiero completo:*\n\n");
+        StringBuilder sb = new StringBuilder();
         
         // 1. Get balance info (total income and expenses)
         Map<String, Object> balanceResult = coreApi.getUserBalance(userId);
+        Double totalIncome = 0.0;
+        Double totalExpenses = 0.0;
+        Double currentBalance = 0.0;
         
         if (!balanceResult.containsKey("error")) {
-            Double totalIncome = balanceResult.get("totalIncome") != null ? ((Number) balanceResult.get("totalIncome")).doubleValue() : 0.0;
-            Double totalExpenses = balanceResult.get("totalExpenses") != null ? ((Number) balanceResult.get("totalExpenses")).doubleValue() : 0.0;
-            Double currentBalance = balanceResult.get("currentBalance") != null ? ((Number) balanceResult.get("currentBalance")).doubleValue() : 0.0;
-            
-            sb.append("💰 *Ingresos totales:* $").append(String.format("%,.0f", totalIncome)).append("\n");
-            sb.append("💸 *Gastos totales:* $").append(String.format("%,.0f", totalExpenses)).append("\n");
-            sb.append("💵 *Saldo actual:* $").append(String.format("%,.0f", currentBalance)).append("\n\n");
+            totalIncome = balanceResult.get("totalIncome") != null ? ((Number) balanceResult.get("totalIncome")).doubleValue() : 0.0;
+            totalExpenses = balanceResult.get("totalExpenses") != null ? ((Number) balanceResult.get("totalExpenses")).doubleValue() : 0.0;
+            currentBalance = balanceResult.get("currentBalance") != null ? ((Number) balanceResult.get("currentBalance")).doubleValue() : 0.0;
         }
         
         // 2. Get expenses by category
@@ -839,27 +1066,89 @@ public class MessageProcessorService {
         }
         
         if (result.containsKey("error")) {
+            sb.append("📊 *Tu situación financiera:*\n\n");
+            sb.append("💰 *Ingresos totales:* $").append(String.format("%,.0f", totalIncome)).append("\n");
+            sb.append("💸 *Gastos totales:* $").append(String.format("%,.0f", totalExpenses)).append("\n");
+            sb.append("💵 *Saldo actual:* $").append(String.format("%,.0f", currentBalance)).append("\n\n");
             return sb.toString() + "❌ No pude obtener el desglose por categoría.";
         }
         
         List<Map<String, Object>> categories = (List<Map<String, Object>>) result.get("data");
         
         if (categories != null && !categories.isEmpty()) {
-            sb.append("📉 *Desglose de gastos:*\n");
+            // Get the top category for conversational intro
+            Map<String, Object> topCategory = categories.get(0);
+            String topCatName = (String) topCategory.get("category");
+            Double topCatAmount = ((Number) topCategory.get("totalAmount")).doubleValue();
+            Double topCatPercentage = topCategory.get("percentage") != null ? ((Number) topCategory.get("percentage")).doubleValue() : 0.0;
+            String topCatEmoji = getCategoryEmoji(topCatName);
+            
+            // Conversational intro based on the top category
+            if (topCatPercentage > 50) {
+                sb.append(String.format("¡Tu mayor gasto está en *%s*! %s Con $%,.0f (%.0f%%), representa la mayor parte de tus gastos.\n\n", 
+                    topCatName, topCatEmoji, topCatAmount, topCatPercentage));
+            } else if (topCatPercentage > 30) {
+                sb.append(String.format("*%s* %s es donde más gastas, con $%,.0f (%.0f%%) de tus gastos totales.\n\n", 
+                    topCatName, topCatEmoji, topCatAmount, topCatPercentage));
+            } else {
+                sb.append(String.format("Tus gastos están bastante distribuidos. *%s* %s lidera con $%,.0f (%.0f%%).\n\n", 
+                    topCatName, topCatEmoji, topCatAmount, topCatPercentage));
+            }
+            
+            // Balance summary
+            sb.append("💰 Ingresos: $").append(String.format("%,.0f", totalIncome));
+            sb.append(" | 💸 Gastos: $").append(String.format("%,.0f", totalExpenses));
+            sb.append(" | 💵 Saldo: *$").append(String.format("%,.0f", currentBalance)).append("*\n\n");
+            
+            sb.append("📉 *Desglose completo:*\n");
             
             for (Map<String, Object> cat : categories) {
                 String category = (String) cat.get("category");
-                Double totalAmount = ((Number) cat.get("totalAmount")).doubleValue();
+                Double amount = ((Number) cat.get("totalAmount")).doubleValue();
                 Double percentage = cat.get("percentage") != null ? ((Number) cat.get("percentage")).doubleValue() : 0.0;
+                String emoji = getCategoryEmoji(category);
                 
                 String bar = generateProgressBar(percentage);
-                sb.append(String.format("• %s: $%,.0f (%s %.1f%%)\n", category, totalAmount, bar, percentage));
+                sb.append(String.format("• %s %s: $%,.0f (%s %.1f%%)\n", emoji, category, amount, bar, percentage));
+            }
+            
+            // Add helpful tip based on spending pattern
+            if (topCatPercentage > 50) {
+                sb.append(String.format("\n💡 *Tip:* Considera revisar tus gastos en %s, ya que representan más de la mitad de tu presupuesto.", topCatName));
             }
         } else {
-            sb.append("📋 No tienes gastos registrados aún.");
+            sb.append("📊 *Tu situación financiera:*\n\n");
+            sb.append("💰 *Ingresos totales:* $").append(String.format("%,.0f", totalIncome)).append("\n");
+            sb.append("💸 *Gastos totales:* $").append(String.format("%,.0f", totalExpenses)).append("\n");
+            sb.append("💵 *Saldo actual:* $").append(String.format("%,.0f", currentBalance)).append("\n\n");
+            sb.append("📋 No tienes gastos registrados aún. ¡Empieza a registrar para ver tu desglose!");
         }
         
         return sb.toString();
+    }
+    
+    /**
+     * Gets emoji for a category to make responses more visual.
+     */
+    private String getCategoryEmoji(String category) {
+        if (category == null) return "📦";
+        return switch (category.toLowerCase()) {
+            case "comida" -> "🍔";
+            case "transporte" -> "🚗";
+            case "entretenimiento" -> "🎬";
+            case "salud" -> "💊";
+            case "educación" -> "📚";
+            case "hogar" -> "🏠";
+            case "ropa" -> "👕";
+            case "tecnología" -> "📱";
+            case "servicios" -> "💡";
+            case "arriendo", "vivienda" -> "🏠";
+            case "salario" -> "💼";
+            case "freelance" -> "💻";
+            case "inversiones" -> "📈";
+            case "regalos" -> "🎁";
+            default -> "📦";
+        };
     }
 
     /**
@@ -882,8 +1171,45 @@ public class MessageProcessorService {
         Double netCashflow = result.get("netMonthlyCashflow") != null ? ((Number) result.get("netMonthlyCashflow")).doubleValue() : 0.0;
         
         StringBuilder sb = new StringBuilder("💵 *Tu flujo de caja mensual:*\n\n");
-        sb.append(String.format("📈 Ingresos fijos: $%,.0f\n", monthlyIncome));
-        sb.append(String.format("📉 Gastos fijos: $%,.0f\n", monthlyExpenses));
+        
+        // Get detailed recurring transactions for breakdown
+        Map<String, Object> recurringResult = coreApi.getRecurringTransactions(userId);
+        List<Map<String, Object>> recurring = null;
+        if (!recurringResult.containsKey("error")) {
+            recurring = (List<Map<String, Object>>) recurringResult.get("data");
+        }
+        
+        // Show income breakdown
+        sb.append("📈 *Ingresos fijos:* $").append(String.format("%,.0f", monthlyIncome)).append("\n");
+        if (recurring != null && !recurring.isEmpty()) {
+            for (Map<String, Object> rec : recurring) {
+                if ("Income".equals(rec.get("type"))) {
+                    Double amount = ((Number) rec.get("amount")).doubleValue();
+                    String description = (String) rec.get("description");
+                    String category = (String) rec.get("category");
+                    String displayName = (description != null && !description.isEmpty()) ? description : category;
+                    String frequency = translatePeriod((String) rec.get("frequency"));
+                    sb.append(String.format("   • 💰 $%,.0f - %s (%s)\n", amount, displayName, frequency));
+                }
+            }
+        }
+        
+        // Show expense breakdown
+        sb.append("\n📉 *Gastos fijos:* $").append(String.format("%,.0f", monthlyExpenses)).append("\n");
+        if (recurring != null && !recurring.isEmpty()) {
+            for (Map<String, Object> rec : recurring) {
+                if ("Expense".equals(rec.get("type"))) {
+                    Double amount = ((Number) rec.get("amount")).doubleValue();
+                    String description = (String) rec.get("description");
+                    String category = (String) rec.get("category");
+                    String displayName = (description != null && !description.isEmpty()) ? description : category;
+                    String frequency = translatePeriod((String) rec.get("frequency"));
+                    sb.append(String.format("   • 💸 $%,.0f - %s (%s)\n", amount, displayName, frequency));
+                }
+            }
+        }
+        
+        // Net cashflow
         sb.append(String.format("\n💰 *Dinero libre mensual:* $%,.0f", netCashflow));
         
         if (netCashflow > 0) {
@@ -897,9 +1223,10 @@ public class MessageProcessorService {
 
     /**
      * Handles listing recurring transactions.
+     * Now supports filtering by type (Income/Expense) when specified.
      */
     @SuppressWarnings("unchecked")
-    private String handleListRecurring(String userId) {
+    private String handleListRecurring(String userId, IntentResult intent) {
         if (useMock) {
             return "🔄 Función disponible solo con el API real.\n\n🧪 _[Modo prueba]_";
         }
@@ -916,25 +1243,67 @@ public class MessageProcessorService {
             return "🔄 No tienes transacciones recurrentes configuradas.\n\n💡 Puedes crear una diciendo: \"Me pagan 2M cada mes\" o \"Pago Netflix mensualmente\"";
         }
         
-        StringBuilder sb = new StringBuilder("🔄 *Tus transacciones recurrentes:*\n\n");
+        // Get filter type from intent
+        String filterType = intent.getType(); // "Income", "Expense", or null
         
-        for (Map<String, Object> rec : recurring) {
+        // Filter by type if specified
+        List<Map<String, Object>> filteredRecurring = recurring;
+        String title;
+        
+        if ("Income".equalsIgnoreCase(filterType)) {
+            filteredRecurring = recurring.stream()
+                .filter(rec -> "Income".equals(rec.get("type")))
+                .toList();
+            title = "💰 *Tus ingresos fijos/recurrentes:*\n\n";
+        } else if ("Expense".equalsIgnoreCase(filterType)) {
+            filteredRecurring = recurring.stream()
+                .filter(rec -> "Expense".equals(rec.get("type")))
+                .toList();
+            title = "💸 *Tus gastos fijos/recurrentes:*\n\n";
+        } else {
+            title = "🔄 *Tus transacciones recurrentes:*\n\n";
+        }
+        
+        if (filteredRecurring.isEmpty()) {
+            if ("Income".equalsIgnoreCase(filterType)) {
+                return "💰 No tienes ingresos recurrentes configurados.\n\n💡 Puedes crear uno diciendo: \"Me pagan 2M cada mes\"";
+            } else if ("Expense".equalsIgnoreCase(filterType)) {
+                return "💸 No tienes gastos fijos configurados.\n\n💡 Puedes crear uno diciendo: \"Pago Netflix mensualmente\"";
+            }
+        }
+        
+        StringBuilder sb = new StringBuilder(title);
+        
+        // Calculate totals for filtered transactions
+        double totalAmount = 0;
+        
+        for (Map<String, Object> rec : filteredRecurring) {
             String type = (String) rec.get("type");
             String emoji = "Income".equals(type) ? "💰" : "💸";
             Double amount = ((Number) rec.get("amount")).doubleValue();
+            String description = (String) rec.get("description");
             String category = (String) rec.get("category");
+            String displayName = (description != null && !description.isEmpty()) ? description : category;
             String frequency = translatePeriod((String) rec.get("frequency"));
             Boolean isActive = (Boolean) rec.get("isActive");
             String status = isActive != null && isActive ? "" : " ⏸️";
             
-            sb.append(String.format("%s $%,.0f - %s (%s)%s\n", emoji, amount, category, frequency, status));
+            sb.append(String.format("%s $%,.0f - %s (%s)%s\n", emoji, amount, displayName, frequency, status));
+            totalAmount += amount;
         }
+        
+        // Add total at the end
+        sb.append(String.format("\n📊 *Total:* $%,.0f (%d %s)", 
+            totalAmount, 
+            filteredRecurring.size(),
+            filteredRecurring.size() == 1 ? "transacción" : "transacciones"));
         
         return sb.toString();
     }
 
     /**
      * Handles deleting a recurring transaction.
+     * Improved to ask for confirmation when search is ambiguous.
      */
     @SuppressWarnings("unchecked")
     private String handleDeleteRecurring(String userId, IntentResult intent) {
@@ -957,22 +1326,83 @@ public class MessageProcessorService {
         
         // Try to find by description or category
         String searchTerm = intent.getDescription() != null ? intent.getDescription() : intent.getCategory();
-        Map<String, Object> toDelete = null;
+        List<Map<String, Object>> matches = new java.util.ArrayList<>();
         
-        if (searchTerm != null) {
+        if (searchTerm != null && !searchTerm.isEmpty()) {
             for (Map<String, Object> rec : recurring) {
                 String desc = (String) rec.get("description");
                 String cat = (String) rec.get("category");
                 if ((desc != null && desc.toLowerCase().contains(searchTerm.toLowerCase())) ||
                     (cat != null && cat.toLowerCase().contains(searchTerm.toLowerCase()))) {
-                    toDelete = rec;
-                    break;
+                    matches.add(rec);
                 }
             }
         }
         
-        // If not found by search, delete the last one
-        if (toDelete == null) {
+        // If multiple matches, ask for clarification
+        if (matches.size() > 1) {
+            StringBuilder sb = new StringBuilder("🤔 Encontré varias opciones. ¿Cuál querías eliminar?\n\n");
+            for (int i = 0; i < matches.size(); i++) {
+                Map<String, Object> rec = matches.get(i);
+                String type = (String) rec.get("type");
+                String emoji = "Income".equals(type) ? "💰" : "💸";
+                Double amount = ((Number) rec.get("amount")).doubleValue();
+                String description = (String) rec.get("description");
+                String category = (String) rec.get("category");
+                String displayName = (description != null && !description.isEmpty()) ? description : category;
+                String frequency = translatePeriod((String) rec.get("frequency"));
+                
+                sb.append(String.format("%d. %s $%,.0f - %s (%s)\n", i + 1, emoji, amount, displayName, frequency));
+            }
+            sb.append("\n💡 Dime el número o nombre específico para eliminar.");
+            return sb.toString();
+        }
+        
+        // If no matches and search term is null or generic, ask for clarification
+        if (matches.isEmpty() && (searchTerm == null || searchTerm.isEmpty())) {
+            // Check if this might be a confirmation response (number or "elimina el 1")
+            // For now, show a list to choose from
+            StringBuilder sb = new StringBuilder("🤔 ¿Cuál transacción recurrente querías eliminar?\n\n");
+            
+            // Show first 5 recurring transactions as options
+            int limit = Math.min(recurring.size(), 5);
+            for (int i = 0; i < limit; i++) {
+                Map<String, Object> rec = recurring.get(i);
+                String type = (String) rec.get("type");
+                String emoji = "Income".equals(type) ? "💰" : "💸";
+                Double amount = ((Number) rec.get("amount")).doubleValue();
+                String description = (String) rec.get("description");
+                String category = (String) rec.get("category");
+                String displayName = (description != null && !description.isEmpty()) ? description : category;
+                String frequency = translatePeriod((String) rec.get("frequency"));
+                
+                sb.append(String.format("%d. %s $%,.0f - %s (%s)\n", i + 1, emoji, amount, displayName, frequency));
+            }
+            
+            if (recurring.size() > 5) {
+                sb.append(String.format("... y %d más.\n", recurring.size() - 5));
+            }
+            
+            sb.append("\n💡 Escribe el nombre o número del que quieras eliminar.");
+            return sb.toString();
+        }
+        
+        // Get the transaction to delete
+        Map<String, Object> toDelete;
+        if (!matches.isEmpty()) {
+            toDelete = matches.get(0);
+        } else {
+            // Last resort: try to find by type (Income/Expense) based on intent context
+            String typeFilter = intent.getType();
+            if (typeFilter != null) {
+                for (Map<String, Object> rec : recurring) {
+                    if (typeFilter.equalsIgnoreCase((String) rec.get("type"))) {
+                        toDelete = rec;
+                        break;
+                    }
+                }
+            }
+            // If still no match, use first item (backward compatibility)
             toDelete = recurring.get(0);
         }
         
@@ -983,10 +1413,18 @@ public class MessageProcessorService {
             return "❌ No pude eliminar la transacción recurrente. " + deleteResult.get("error");
         }
         
+        // Build a better response
+        String type = (String) toDelete.get("type");
+        String emoji = "Income".equals(type) ? "💰" : "💸";
+        String description = (String) toDelete.get("description");
         String category = (String) toDelete.get("category");
+        String displayName = (description != null && !description.isEmpty()) ? description : category;
         Double amount = ((Number) toDelete.get("amount")).doubleValue();
+        String frequency = translatePeriod((String) toDelete.get("frequency"));
+        String typeText = "Income".equals(type) ? "ingreso" : "gasto";
         
-        return String.format("✅ Transacción recurrente eliminada!\n• %s: $%,.0f", category, amount);
+        return String.format("✅ ¡Listo! Eliminé tu %s recurrente:\n\n%s *%s*\n• Monto: $%,.0f\n• Frecuencia: %s\n\n📝 Ya no se registrará este %s automáticamente.", 
+            typeText, emoji, displayName, amount, frequency, typeText);
     }
 
     // ==================== UTILITY METHODS ====================

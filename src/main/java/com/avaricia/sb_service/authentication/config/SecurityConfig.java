@@ -33,6 +33,9 @@ public class SecurityConfig {
                         .requestMatchers("/login/**").permitAll()
                         .requestMatchers("/api/telegram/**").permitAll()
                         .requestMatchers("/api/whatsapp/**").permitAll()
+                        .requestMatchers("/telegram/**").permitAll()
+                        .requestMatchers("/whatsapp/**").permitAll()
+                        .requestMatchers("/api/notifications/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session

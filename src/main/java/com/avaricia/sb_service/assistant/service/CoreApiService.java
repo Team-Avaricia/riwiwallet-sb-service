@@ -116,12 +116,17 @@ public class CoreApiService {
                                                    String category, String description, String source) {
         String url = baseUrl + "/api/Transaction";
         
+        // Use category as description if description is null or empty
+        String finalDescription = (description != null && !description.isEmpty()) 
+            ? description 
+            : category;
+        
         Map<String, Object> body = new HashMap<>();
         body.put("userId", userId);
         body.put("amount", amount);
         body.put("type", type);
         body.put("category", category);
-        body.put("description", description);
+        body.put("description", finalDescription);
         body.put("source", source);
         
         return postRequest(url, body);
@@ -205,9 +210,24 @@ public class CoreApiService {
     }
 
     public Map<String, Object> getTransactionsByRange(String userId, String startDate, String endDate) {
+        return getTransactionsByRange(userId, startDate, endDate, null);
+    }
+
+    /**
+     * Get transactions within a date range with optional type filter.
+     * @param userId The user ID
+     * @param startDate Start date in YYYY-MM-DD format
+     * @param endDate End date in YYYY-MM-DD format
+     * @param type Optional filter: "Income" or "Expense". Null returns all transactions.
+     * @return Map containing the transactions data
+     */
+    public Map<String, Object> getTransactionsByRange(String userId, String startDate, String endDate, String type) {
         String utcStartDate = convertToUtcFormat(startDate, true);
         String utcEndDate = convertToUtcFormat(endDate, false);
         String url = baseUrl + "/api/Transaction/user/" + userId + "/range?startDate=" + utcStartDate + "&endDate=" + utcEndDate;
+        if (type != null && !type.isEmpty()) {
+            url += "&type=" + type;
+        }
         return getRequest(url);
     }
 

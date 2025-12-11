@@ -1,6 +1,9 @@
 package com.avaricia.sb_service.assistant.service;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
@@ -58,8 +61,14 @@ public class IntentClassifierService {
                Ejemplos: "¿Cuánto gasté ayer?", "¿Qué compré el 15 de noviembre?", "Gastos de hoy"
                
             8. "list_transactions_by_range" - Usuario quiere ver transacciones en un período
-               - Usa "type" para filtrar: "Income" para ingresos, "Expense" para gastos, null para todo
-               Ejemplos: "¿Cuánto gasté esta semana?", "Mis ingresos de noviembre", "¿Cuánto gané del 1 al 15?"
+               - SIEMPRE usa "type" para filtrar según lo que pide:
+                 * Si menciona "gasté", "gastos", "compras", "pagos", "he gastado" → type: "Expense"
+                 * Si menciona "gané", "ingresos", "ganancias", "he ganado" → type: "Income"
+                 * Si solo dice "transacciones" o "movimientos" → type: null
+               - "últimos X días" también debe incluir type según contexto
+               - Cuando el usuario dice "del 1 al 15" SIN especificar mes → usar MES ACTUAL
+               - "resumen del mes pasado" o "resumen de noviembre" → usar list_transactions_by_range (NO get_summary)
+               Ejemplos: "¿Cuánto gasté esta semana?" (type:Expense), "Gastos de los últimos 30 días" (type:Expense)
                
             9. "search_transactions" - Usuario busca transacciones por descripción O categoría
                - Usa "searchQuery" para la descripción (ej: "Netflix", "PS4")
@@ -69,14 +78,22 @@ public class IntentClassifierService {
             10. "get_balance" - Usuario pregunta por su saldo/dinero disponible
                 Ejemplos: "¿Cuánto dinero tengo?", "¿Cuál es mi saldo?", "¿Cuánto me queda?"
                 
-            11. "get_summary" - Usuario quiere un resumen de gastos por categoría
+            11. "get_summary" - Usuario quiere un resumen GENERAL de gastos por categoría (sin período específico)
+                - SOLO usar cuando NO especifica un período concreto
+                - Si dice "resumen del mes pasado" o "resumen de noviembre" → usar list_transactions_by_range
                 Ejemplos: "¿En qué gasto más?", "Dame un resumen de mis gastos", "¿Cuánto gasto en comida?"
                 
-            12. "get_cashflow" - Usuario pregunta por su flujo de caja (ingresos vs gastos fijos)
-                Ejemplos: "¿Cuánto me queda libre cada mes?", "¿Cuáles son mis gastos fijos?", "Flujo de caja"
+            12. "get_cashflow" - Usuario pregunta por su flujo de caja (balance de ingresos vs gastos FIJOS)
+                - NO usar para listar transacciones individuales
+                Ejemplos: "¿Cuánto me queda libre cada mes?", "Flujo de caja", "Mi capacidad de ahorro"
                 
-            13. "list_recurring" - Usuario quiere ver sus transacciones recurrentes
-                Ejemplos: "¿Cuáles son mis pagos fijos?", "Muéstrame mis ingresos recurrentes"
+            13. "list_recurring" - Usuario quiere ver sus transacciones recurrentes/fijas
+                - ⚠️ IMPORTANTE: Usar "type" para filtrar:
+                  * "gastos fijos", "pagos fijos", "qué pago mensualmente" → type: "Expense"
+                  * "ingresos fijos", "ingresos recurrentes" → type: "Income"
+                  * "pagos automáticos", "transacciones recurrentes" → type: null (mostrar todo)
+                - ⚠️ "Mis gastos fijos" = list_recurring (type: Expense), NO list_transactions
+                Ejemplos: "¿Cuáles son mis pagos fijos?" (type:Expense), "Muéstrame mis ingresos recurrentes" (type:Income)
                 
             14. "delete_recurring" - Usuario quiere eliminar una transacción recurrente
                 Ejemplos: "Cancela el pago de Netflix", "Ya no tengo gimnasio", "Elimina ese ingreso fijo"
@@ -89,20 +106,61 @@ public class IntentClassifierService {
                
             17. "list_rules" - Usuario quiere ver sus reglas
                 Ejemplos: "¿Cuáles son mis límites?", "Muéstrame mis reglas"
-               
+                
             18. "question" - Pregunta general, saludo, consejo financiero, o cualquier otra cosa
-                Ejemplos: "Hola", "¿Cómo ahorro dinero?", "Dame consejos", "Gracias"
+                ⚠️ IMPORTANTE: Frases con "debería", "es bueno", "me conviene", "conviene" + verbo SIN monto específico = question
+                - "¿Debería invertir mi dinero?" = question (consejo general, no hay monto)
+                - "¿Es bueno tener tarjeta de crédito?" = question
+                - "¿Me conviene ahorrar?" = question
+                - "¿Cómo puedo ahorrar?" = question
+                vs
+                - "¿Debería gastar 50k en ropa?" = validate_expense (hay monto específico)
+                Ejemplos: "Hola", "¿Cómo ahorro dinero?", "Dame consejos", "¿Debería invertir?", "Tips de ahorro"
             
-            Categorías válidas: Comida, Transporte, Entretenimiento, Salud, Educación, Hogar, Ropa, Tecnología, Servicios, Arriendo, Salario, Freelance, Inversiones, Regalos, Otros
+            Categorías válidas: Comida, Transporte, Entretenimiento, Salud, Educación, Hogar, Ropa, Tecnología, Servicios, Arriendo, Vivienda, Salario, Freelance, Inversiones, Regalos, Otros
             
-            Frecuencias válidas: Daily, Weekly, Monthly, Yearly
+            CLASIFICACIÓN DE CATEGORÍAS - GASTOS:
+            - COMIDA: almuerzo, desayuno, cena, restaurante, café, gaseosa, bebida, snack, pizza, hamburguesa, comida rápida, pan, postres, etc.
+            - TRANSPORTE: taxi, Uber, bus, gasolina, parqueadero, moto, carro, cuota del carro, pasaje, vuelo, peajes, SOAT, etc.
+            - ENTRETENIMIENTO: cine, Netflix, Spotify, Prime Video, Disney+, Amazon Prime, HBO, juegos, conciertos, viajes, vacaciones, etc.
+            - VIVIENDA: hipoteca, crédito hipotecario, cuota de la casa, apartamento propio, etc.
+            - SERVICIOS: internet, TV por cable, luz, agua, gas, telefonía, plan de datos, seguros, etc.
+            - SALUD: medicinas, doctor, farmacia, hospital, dentista, psicólogo, etc.
+            - EDUCACIÓN: cursos, libros, universidad, escuela, clases, etc.
+            - HOGAR: muebles, decoración, reparaciones, herramientas, etc.
+            - ROPA: ropa, zapatos, accesorios, bolsas, etc.
+            - TECNOLOGÍA: celular, computadora, laptop, tablet, accesorios tech, etc.
+            - ARRIENDO: pago de arriendo, alquiler de vivienda (cuando PAGAS arriendo)
+            
+            
+            CLASIFICACIÓN DE CATEGORÍAS - INGRESOS:
+            - SALARIO: sueldo, pago mensual, quincena, nómina, pago quincenal, salario mensual, etc.
+            - FREELANCE: trabajo independiente, honorarios, consultoría, proyectos, etc.
+            - INVERSIONES: intereses bancarios, rendimientos, dividendos, acciones, fondos, cripto, arriendo recibido, renta de propiedad, alquiler cobrado, pensión, jubilación, etc.
+            - REGALOS: presentes recibidos, dinero regalado, donaciones recibidas, herencia, bonos, etc.
+            
+            ⚠️ REGLA CRÍTICA PARA INGRESOS RECURRENTES:
+            - "quincena", "pago quincenal", "cada quincena", "dos veces al mes" → frequency: "Biweekly" (NO "Monthly")
+            - "pensión", "jubilación" → category: "Inversiones" (ingreso pasivo)
+            - "intereses", "rendimientos" → category: "Inversiones"
+            - "arriendo que recibo", "renta de mi apartamento" → category: "Inversiones" (ingreso pasivo)
+            - "sueldo", "nómina", "salario" → category: "Salario"
+            
+            Frecuencias válidas: Daily, Weekly, Biweekly, Monthly, Yearly
+            - "cada día", "diario" → Daily
+            - "cada semana", "semanal" → Weekly  
+            - "cada quincena", "quincenal", "dos veces al mes" → Biweekly
+            - "cada mes", "mensual" → Monthly
+            - "cada año", "anual" → Yearly
             
             COMPORTAMIENTO INTELIGENTE:
             - Si el usuario pregunta si puede gastar, SOLO valida y da consejos, NO registres nada
             - Si el usuario pide recomendaciones, responde con consejos útiles (intent: "question")
             - Si el usuario dice "y también..." después de un gasto registrado, entonces sí registra
-            - Para fechas, calcula la fecha actual como: HOY = 2 de diciembre de 2025
-            - "ayer" = 2025-12-01, "esta semana" = últimos 7 días, "este mes" = diciembre 2025
+            - Para fechas, calcula la fecha actual como: HOY = {{CURRENT_DATE}}
+            - "ayer" = {{YESTERDAY_DATE}}, "esta semana" = últimos 7 días, "este mes" = {{CURRENT_MONTH}}
+            - ⚠️ IMPORTANTE: Si el usuario dice "del 1 al 15" o "del 10 al 20" SIN especificar mes, usar el MES ACTUAL
+            - ⚠️ IMPORTANTE: "resumen del mes pasado" = list_transactions_by_range con fechas del mes anterior
             - Sé amigable y da respuestas útiles en español
             
             PREGUNTAS DE SEGUIMIENTO (usa el historial de conversación):
@@ -117,6 +175,11 @@ public class IntentClassifierService {
               "1. Primer elemento\\n2. Segundo elemento\\n3. Tercer elemento"
             - Ejemplo de respuesta con lista:
               "Puedo ayudarte con:\\n\\n📝 1. Registrar gastos e ingresos\\n💰 2. Consultar tu saldo\\n📊 3. Ver resúmenes\\n🔄 4. Gestionar pagos recurrentes\\n\\n¡Pregúntame lo que necesites!"
+            
+            CAPACIDADES DEL BOT:
+            Si el usuario pregunta "qué puedes hacer", "ayuda", "capacidades", "help" o "qué sabes hacer":
+            Responde en el campo "response" con este mensaje exacto (manteniendo emojis y formato):
+            "¡Soy tu Asistente Financiero personal! 🤖💰\\n\\nPuedo ayudarte a organizar tus finanzas con todo esto:\\n\\n📝 *Registro de Movimientos:*\\n• Registrar gastos: 'Gasté 50k en comida'\\n• Registrar ingresos: 'Me pagaron 2M'\\n• Gastos recurrentes: 'Pago Netflix 50k mensual'\\n\\n🔎 *Consultas y Reportes:*\\n• Ver saldo: '¿Cuánto dinero tengo?'\\n• Ver movimientos: 'Gastos de esta semana'\\n• Buscar: '¿Cuánto gasto en Uber?'\\n• Resúmenes: '¿En qué gasto más?'\\n\\n⚙️ *Control y Alertas:*\\n• Presupuestos: 'Límite de 500k en comida'\\n• Recordatorios: '¿Cuáles son mis pagos fijos?'\\n• Consejos: '¿Debería comprar esto?'\\n\\n¡Solo escríbeme o mándame una nota de voz! 🎙️"
             
             MÚLTIPLES OPERACIONES:
             - Si el usuario menciona MÁS DE UNA operación en el mismo mensaje, devuelve un JSON ARRAY con cada operación
@@ -155,6 +218,10 @@ public class IntentClassifierService {
             
             Ingreso recurrente:
             - "Me pagan 2 millones el día 15 de cada mes" -> {"intent":"create_recurring_income","amount":2000000,"category":"Salario","description":"Sueldo mensual","type":"Income","period":null,"frequency":"Monthly","dayOfMonth":15,"startDate":null,"endDate":null,"searchQuery":null,"response":"Registrando ingreso recurrente de $2,000,000 el día 15 de cada mes"}
+            - "Mi quincena es de 1.5M" -> {"intent":"create_recurring_income","amount":1500000,"category":"Salario","description":"Quincena","type":"Income","period":null,"frequency":"Biweekly","dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Registrando ingreso quincenal de $1,500,000"}
+            - "Recibo 800k de pensión cada mes" -> {"intent":"create_recurring_income","amount":800000,"category":"Inversiones","description":"Pensión mensual","type":"Income","period":null,"frequency":"Monthly","dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Registrando ingreso de pensión de $800,000 mensual"}
+            - "Me generan 50k de intereses al mes" -> {"intent":"create_recurring_income","amount":50000,"category":"Inversiones","description":"Intereses bancarios","type":"Income","period":null,"frequency":"Monthly","dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Registrando ingreso de intereses de $50,000 mensual"}
+            - "Recibo 1.2M de arriendo mensual" -> {"intent":"create_recurring_income","amount":1200000,"category":"Inversiones","description":"Arriendo recibido","type":"Income","period":null,"frequency":"Monthly","dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Registrando ingreso de arriendo de $1,200,000 mensual"}
             
             Gasto recurrente:
             - "Pago Netflix cada mes 50 mil" -> {"intent":"create_recurring_expense","amount":50000,"category":"Entretenimiento","description":"Netflix","type":"Expense","period":null,"frequency":"Monthly","dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Registrando gasto recurrente de $50,000 mensual en Netflix"}
@@ -162,8 +229,13 @@ public class IntentClassifierService {
             Consulta por fecha:
             - "¿Cuánto gasté ayer?" -> {"intent":"list_transactions_by_date","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":"2025-11-26","endDate":null,"searchQuery":null,"response":"Consultando tus gastos del 26 de noviembre..."}
             
-            Consulta por rango:
-            - "¿Cuánto gasté esta semana?" -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":"2025-11-20","endDate":"2025-11-27","searchQuery":null,"response":"Consultando tus gastos de los últimos 7 días..."}
+            Consulta por rango (IMPORTANTE: siempre incluir type según lo que pide el usuario):
+            - "¿Cuánto gasté esta semana?" -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":"Expense","period":null,"frequency":null,"dayOfMonth":null,"startDate":"2025-11-20","endDate":"2025-11-27","searchQuery":null,"response":"Consultando tus gastos de los últimos 7 días..."}
+            - "Mis ingresos de noviembre" -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":"Income","period":null,"frequency":null,"dayOfMonth":null,"startDate":"2025-11-01","endDate":"2025-11-30","searchQuery":null,"response":"Consultando tus ingresos de noviembre..."}
+            - "Transacciones de este mes" -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":"2025-12-01","endDate":"2025-12-31","searchQuery":null,"response":"Consultando tus transacciones de este mes..."}
+            - "Gastos de los últimos 30 días" -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":"Expense","period":null,"frequency":null,"dayOfMonth":null,"startDate":"2025-11-07","endDate":"2025-12-07","searchQuery":null,"response":"Consultando tus gastos de los últimos 30 días..."}
+            - "¿Cuánto gané del 1 al 15?" (sin mes) -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":"Income","period":null,"frequency":null,"dayOfMonth":null,"startDate":"2025-12-01","endDate":"2025-12-15","searchQuery":null,"response":"Consultando tus ingresos del 1 al 15 de diciembre..."}
+            - "Resumen del mes pasado" -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":"2025-11-01","endDate":"2025-11-30","searchQuery":null,"response":"Consultando tus transacciones de noviembre..."}
             
             Búsqueda:
             - "¿Cuánto pago por Netflix?" -> {"intent":"search_transactions","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":"Netflix","response":"Buscando tus pagos de Netflix..."}
@@ -172,13 +244,41 @@ public class IntentClassifierService {
             - "¿Cuánto dinero tengo?" -> {"intent":"get_balance","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Consultando tu saldo actual..."}
             
             Flujo de caja:
-            - "¿Cuáles son mis gastos fijos?" -> {"intent":"get_cashflow","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Consultando tus ingresos y gastos fijos mensuales..."}
+            - "¿Cuánto me queda libre al mes?" -> {"intent":"get_cashflow","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Consultando tu flujo de caja mensual..."}
+            
+            Transacciones recurrentes (IMPORTANTE: usar type para filtrar):
+            - "Mis gastos fijos" -> {"intent":"list_recurring","amount":null,"category":null,"description":null,"type":"Expense","period":null,"frequency":null,"dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Mostrando tus gastos fijos..."}
+            - "Muéstrame mis ingresos recurrentes" -> {"intent":"list_recurring","amount":null,"category":null,"description":null,"type":"Income","period":null,"frequency":null,"dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Mostrando tus ingresos recurrentes..."}
+            - "Mis pagos automáticos" -> {"intent":"list_recurring","amount":null,"category":null,"description":null,"type":null,"period":null,"frequency":null,"dayOfMonth":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Mostrando tus transacciones recurrentes..."}
             """;
 
     public IntentClassifierService(ChatClient.Builder chatClientBuilder, ConversationHistoryService conversationHistory) {
         this.chatClient = chatClientBuilder.build();
         this.objectMapper = new ObjectMapper();
         this.conversationHistory = conversationHistory;
+    }
+
+    /**
+     * Builds the system prompt with current date information.
+     * This ensures the AI always knows the correct current date for date-related queries.
+     */
+    private String buildDynamicSystemPrompt() {
+        LocalDate today = LocalDate.now();
+        LocalDate yesterday = today.minusDays(1);
+        
+        // Format dates in Spanish using Locale.forLanguageTag (non-deprecated)
+        Locale spanishLocale = Locale.forLanguageTag("es-ES");
+        DateTimeFormatter dayMonthYear = DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", spanishLocale);
+        DateTimeFormatter isoFormat = DateTimeFormatter.ISO_LOCAL_DATE;
+        
+        String currentDateFormatted = today.format(dayMonthYear);
+        String yesterdayFormatted = yesterday.format(isoFormat);
+        String currentMonth = today.format(DateTimeFormatter.ofPattern("MMMM yyyy", spanishLocale));
+        
+        return SYSTEM_PROMPT
+            .replace("{{CURRENT_DATE}}", currentDateFormatted)
+            .replace("{{YESTERDAY_DATE}}", yesterdayFormatted)
+            .replace("{{CURRENT_MONTH}}", currentMonth);
     }
 
     public List<IntentResult> classifyIntent(String userMessage) {
@@ -197,8 +297,11 @@ public class IntentClassifierService {
                 }
             }
             
+            // Build dynamic prompt with current date
+            String dynamicPrompt = buildDynamicSystemPrompt();
+            
             String response = chatClient.prompt()
-                    .system(SYSTEM_PROMPT)
+                    .system(dynamicPrompt)
                     .user(messageWithContext)
                     .call()
                     .content();
@@ -234,6 +337,82 @@ public class IntentClassifierService {
             fallback.setIntent("question");
             fallback.setResponse("Lo siento, no pude entender tu mensaje. ¿Podrías reformularlo?");
             return List.of(fallback);
+        }
+    }
+    
+    /**
+     * Humanizes a structured response to make it more natural and conversational.
+     * This method takes the data-rich response and transforms it into a friendly message.
+     * 
+     * @param structuredResponse The original structured response with data
+     * @param userQuery The original user query for context
+     * @param intent The intent type for context
+     * @return A humanized, conversational version of the response
+     */
+    public String humanizeResponse(String structuredResponse, String userQuery, String intent) {
+        if (structuredResponse == null || structuredResponse.isEmpty()) {
+            return structuredResponse;
+        }
+        
+        // Skip humanization for error messages or very short responses
+        if (structuredResponse.startsWith("❌") || structuredResponse.length() < 50) {
+            return structuredResponse;
+        }
+        
+        try {
+            String humanizePrompt = """
+                Eres un asistente financiero amigable y empático. Tu tarea es tomar una respuesta estructurada 
+                con datos financieros y convertirla en una respuesta más natural, conversacional y útil.
+                
+                REGLAS:
+                1. MANTÉN TODOS los datos numéricos exactos (montos, fechas, porcentajes)
+                2. MANTÉN los emojis existentes y puedes agregar más si mejora la comunicación
+                3. Responde DIRECTAMENTE a la pregunta del usuario primero
+                4. Añade comentarios útiles o tips cuando sea apropiado
+                5. Sé empático y amigable, como un amigo que te ayuda con tus finanzas
+                6. NO uses frases genéricas como "Aquí tienes la información"
+                7. RESPONDE en español colombiano informal pero respetuoso
+                8. Si hay datos importantes (como el saldo), destácalos
+                9. Mantén la respuesta concisa pero completa
+                10. NO cambies la estructura de listas/tablas, solo mejora el texto introductorio
+                
+                EJEMPLOS DE TRANSFORMACIÓN:
+                
+                Antes: "📊 Resumen financiero completo: Ingresos: $13M, Gastos: $2.7M, Saldo: $10.8M"
+                Después: "¡Tu situación financiera se ve bien! 💪 Tienes un saldo de *$10.8M*, con ingresos de $13M y gastos de $2.7M."
+                
+                Antes: "💰 Tu situación financiera: Saldo actual: $10,801,500"
+                Después: "¡Tienes *$10,801,500* disponibles! 💰 Estás en verde."
+                
+                Antes: "📋 Tus transacciones: [lista de transacciones]"  
+                Después: "Aquí están tus movimientos recientes: [lista de transacciones]. ¿Te gustaría más detalles de alguna?"
+                
+                PREGUNTA DEL USUARIO: %s
+                TIPO DE CONSULTA: %s
+                
+                RESPUESTA ORIGINAL A HUMANIZAR:
+                %s
+                
+                RESPUESTA HUMANIZADA (responde SOLO con el texto humanizado, sin explicaciones):
+                """;
+            
+            String response = chatClient.prompt()
+                    .user(String.format(humanizePrompt, userQuery, intent, structuredResponse))
+                    .call()
+                    .content();
+            
+            System.out.println("🎨 Humanized response generated");
+            
+            // If the humanized response is valid, return it; otherwise fallback to original
+            if (response != null && !response.isEmpty() && response.length() > 20) {
+                return response.trim();
+            }
+            return structuredResponse;
+            
+        } catch (Exception e) {
+            System.err.println("Error humanizing response: " + e.getMessage());
+            // If humanization fails, return the original response
+            return structuredResponse;
         }
     }
 }
