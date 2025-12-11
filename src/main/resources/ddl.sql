@@ -25,40 +25,6 @@ CREATE INDEX "IX_FinancialRules_UserId_IsActive" ON public."FinancialRules" USIN
 ALTER TABLE public."FinancialRules" ADD CONSTRAINT "FK_FinancialRules_Users_UserId" FOREIGN KEY ("UserId") REFERENCES public."Users"("Id") ON DELETE CASCADE;
 
 
--- public."RecurringTransactions" definition
-
--- Drop table
-
--- DROP TABLE public."RecurringTransactions";
-
-CREATE TABLE public."RecurringTransactions" (
-	"Id" uuid NOT NULL,
-	"UserId" uuid NOT NULL,
-	"Amount" numeric(18, 2) NOT NULL,
-	"Type" text NOT NULL,
-	"Category" varchar(100) NOT NULL,
-	"Description" varchar(500) NULL,
-	"Frequency" text NOT NULL,
-	"StartDate" timestamptz NOT NULL,
-	"EndDate" timestamptz NULL,
-	"DayOfMonth" int4 NULL,
-	"DayOfWeek" int4 NULL,
-	"NextExecutionDate" timestamptz NOT NULL,
-	"IsActive" bool NOT NULL,
-	"CreatedAt" timestamptz NOT NULL,
-	"UpdatedAt" timestamptz NULL,
-	"IsPaidThisPeriod" bool DEFAULT false NOT NULL,
-	"LastPaidDate" timestamptz NULL,
-	CONSTRAINT "PK_RecurringTransactions" PRIMARY KEY ("Id")
-);
-CREATE INDEX "IX_RecurringTransactions_IsActive_NextExecutionDate" ON public."RecurringTransactions" USING btree ("IsActive", "NextExecutionDate");
-CREATE INDEX "IX_RecurringTransactions_UserId" ON public."RecurringTransactions" USING btree ("UserId");
-
-
--- public."RecurringTransactions" foreign keys
-
-ALTER TABLE public."RecurringTransactions" ADD CONSTRAINT "FK_RecurringTransactions_Users_UserId" FOREIGN KEY ("UserId") REFERENCES public."Users"("Id") ON DELETE CASCADE;
-
 -- public."Transactions" definition
 
 -- Drop table

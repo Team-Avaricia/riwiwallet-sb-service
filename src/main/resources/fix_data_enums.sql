@@ -10,17 +10,7 @@ UPDATE public."Transactions" SET "Type" = 'Expense' WHERE "Type" = 'EXPENSE';
 -- TransactionSource
 UPDATE public."Transactions" SET "Source" = 'Manual' WHERE "Source" = 'MANUAL';
 
--- 2. RecurringTransactions
--- TransactionType
-UPDATE public."RecurringTransactions" SET "Type" = 'Income' WHERE "Type" = 'INCOME';
-UPDATE public."RecurringTransactions" SET "Type" = 'Expense' WHERE "Type" = 'EXPENSE';
--- RecurrenceFrequency
-UPDATE public."RecurringTransactions" SET "Frequency" = 'Daily' WHERE "Frequency" = 'DAILY';
-UPDATE public."RecurringTransactions" SET "Frequency" = 'Weekly' WHERE "Frequency" = 'WEEKLY';
-UPDATE public."RecurringTransactions" SET "Frequency" = 'Monthly' WHERE "Frequency" = 'MONTHLY';
-UPDATE public."RecurringTransactions" SET "Frequency" = 'Yearly' WHERE "Frequency" = 'YEARLY';
-
--- 3. FinancialRules
+-- 2. FinancialRules
 -- RuleType
 UPDATE public."FinancialRules" SET "Type" = 'MonthlyBudget' WHERE "Type" = 'BUDGET';
 UPDATE public."FinancialRules" SET "Type" = 'SavingsGoal' WHERE "Type" = 'SAVING_GOAL';

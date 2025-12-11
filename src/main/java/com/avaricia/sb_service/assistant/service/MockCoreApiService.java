@@ -192,25 +192,6 @@ public class MockCoreApiService {
         return response;
     }
 
-    public Map<String, Object> createRecurringTransaction(String userId, Double amount, String type, 
-            String category, String description, String frequency, Integer dayOfMonth) {
-        
-        String recurringId = UUID.randomUUID().toString();
-        Map<String, Object> recurring = new HashMap<>();
-        recurring.put("id", recurringId);
-        recurring.put("userId", userId);
-        recurring.put("amount", amount);
-        recurring.put("type", type);
-        recurring.put("category", category);
-        recurring.put("description", description);
-        recurring.put("frequency", frequency != null ? frequency : "Monthly");
-        recurring.put("dayOfMonth", dayOfMonth != null ? dayOfMonth : 1);
-        recurring.put("isActive", true);
-        recurring.put("createdAt", LocalDateTime.now().format(formatter));
-
-        return recurring;
-    }
-
     public Double getBalance(String userId) {
         return userBalances.getOrDefault(userId, 1000000.0);
     }

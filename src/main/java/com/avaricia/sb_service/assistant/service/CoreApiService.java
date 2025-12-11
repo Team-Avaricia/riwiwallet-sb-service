@@ -254,59 +254,6 @@ public class CoreApiService {
         return getRequest(url);
     }
 
-    // ==================== RECURRING TRANSACTION ENDPOINTS ====================
-
-    public Map<String, Object> createRecurringTransaction(String userId, Double amount, String type,
-                                                           String category, String description,
-                                                           String frequency, Integer dayOfMonth) {
-        String url = baseUrl + "/api/RecurringTransaction";
-        
-        // Format dates as ISO timestamp (required by Brahiam's API)
-        String now = java.time.LocalDateTime.now().toString();
-        String farFuture = java.time.LocalDateTime.now().plusYears(10).toString();
-        
-        Map<String, Object> body = new HashMap<>();
-        body.put("userId", userId);
-        body.put("amount", amount);
-        body.put("type", type);
-        body.put("category", category);
-        body.put("description", description);
-        body.put("frequency", frequency);
-        body.put("startDate", now);
-        body.put("endDate", farFuture); // Required by API - set to far future for "indefinite"
-        body.put("dayOfMonth", dayOfMonth != null ? dayOfMonth : 1);
-        body.put("dayOfWeek", 1); // Default to Monday if weekly
-        
-        return postRequest(url, body);
-    }
-
-    public Map<String, Object> getRecurringTransactions(String userId) {
-        String url = baseUrl + "/api/RecurringTransaction/user/" + userId;
-        return getRequest(url);
-    }
-
-    public Map<String, Object> getCashflow(String userId) {
-        String url = baseUrl + "/api/RecurringTransaction/user/" + userId + "/cashflow";
-        return getRequest(url);
-    }
-
-    public Map<String, Object> updateRecurringTransaction(String recurringId, Map<String, Object> updates) {
-        String url = baseUrl + "/api/RecurringTransaction/" + recurringId;
-        return putRequest(url, updates);
-    }
-
-    public Map<String, Object> toggleRecurringTransaction(String recurringId, boolean isActive) {
-        String url = baseUrl + "/api/RecurringTransaction/" + recurringId + "/toggle";
-        Map<String, Object> body = new HashMap<>();
-        body.put("isActive", isActive);
-        return patchRequest(url, body);
-    }
-
-    public Map<String, Object> deleteRecurringTransaction(String recurringId) {
-        String url = baseUrl + "/api/RecurringTransaction/" + recurringId;
-        return deleteRequest(url);
-    }
-
     // ==================== HELPER METHODS ====================
 
     @SuppressWarnings("unchecked")
@@ -430,40 +377,6 @@ public class CoreApiService {
             
         } catch (Exception e) {
             System.err.println("❌ Error in PATCH " + url + ": " + e.getMessage());
-            Map<String, Object> error = new HashMap<>();
-            error.put("success", false);
-            error.put("error", e.getMessage());
-            return error;
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> putRequest(String url, Map<String, Object> body) {
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            
-            System.out.println("📤 PUT " + url);
-            System.out.println("   Body: " + body);
-            
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PUT, request, String.class);
-            
-            System.out.println("📥 Response: " + response.getStatusCode());
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("status", response.getStatusCode().value());
-            
-            if (response.getBody() != null && !response.getBody().isEmpty()) {
-                result.putAll(objectMapper.readValue(response.getBody(), Map.class));
-            }
-            
-            return result;
-            
-        } catch (Exception e) {
-            System.err.println("❌ Error in PUT " + url + ": " + e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("error", e.getMessage());

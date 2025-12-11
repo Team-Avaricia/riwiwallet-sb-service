@@ -96,8 +96,6 @@ public class MessageProcessorService {
             "list_transactions_by_range",
             "list_transactions_by_date",
             "search_transactions",
-            "get_cashflow",
-            "list_recurring",
             "list_rules"
         );
         
@@ -198,8 +196,8 @@ public class MessageProcessorService {
         if (intentType == null) return "📋";
         
         return switch (intentType) {
-            case "create_expense", "create_recurring_expense" -> "💸";
-            case "create_income", "create_recurring_income" -> "💰";
+            case "create_expense" -> "💸";
+            case "create_income" -> "💰";
             default -> "📋";
         };
     }
@@ -214,8 +212,6 @@ public class MessageProcessorService {
         return switch (intentType) {
             case "create_expense" -> "Gasto";
             case "create_income" -> "Ingreso";
-            case "create_recurring_expense" -> "Gasto fijo";
-            case "create_recurring_income" -> "Ingreso fijo";
             default -> "Operación";
         };
     }
@@ -230,10 +226,6 @@ public class MessageProcessorService {
                 return handleCreateTransactionSilent(userId, intent, "Expense");
             case "create_income":
                 return handleCreateTransactionSilent(userId, intent, "Income");
-            case "create_recurring_income":
-                return handleCreateRecurringTransactionSilent(userId, intent, "Income");
-            case "create_recurring_expense":
-                return handleCreateRecurringTransactionSilent(userId, intent, "Expense");
             default:
                 return executeIntent(userId, intent);
         }
@@ -247,25 +239,6 @@ public class MessageProcessorService {
                 type, intent.getCategory(), intent.getDescription())
             : coreApi.createTransaction(userId, intent.getAmount(), 
                 type, intent.getCategory(), intent.getDescription());
-        
-        if (api.containsKey("error")) {
-            return "❌ " + api.get("error");
-        }
-        return "✅";
-    }
-    
-    /**
-     * Creates a recurring transaction silently (minimal response for batch operations).
-     */
-    private String handleCreateRecurringTransactionSilent(String userId, IntentResult intent, String type) {
-        String frequency = intent.getFrequency() != null ? intent.getFrequency() : "Monthly";
-        Integer dayOfMonth = intent.getDayOfMonth();
-        
-        Map<String, Object> api = useMock 
-            ? mockCoreApi.createRecurringTransaction(userId, intent.getAmount(), type, 
-                intent.getCategory(), intent.getDescription(), frequency, dayOfMonth)
-            : coreApi.createRecurringTransaction(userId, intent.getAmount(), type, 
-                intent.getCategory(), intent.getDescription(), frequency, dayOfMonth);
         
         if (api.containsKey("error")) {
             return "❌ " + api.get("error");
@@ -288,12 +261,6 @@ public class MessageProcessorService {
                 case "create_income":
                     return handleCreateTransaction(userId, intent, "Income");
                     
-                case "create_recurring_income":
-                    return handleCreateRecurringTransaction(userId, intent, "Income");
-                    
-                case "create_recurring_expense":
-                    return handleCreateRecurringTransaction(userId, intent, "Expense");
-                    
                 case "list_transactions":
                     return handleListTransactions(userId, intent);
                     
@@ -311,15 +278,6 @@ public class MessageProcessorService {
                     
                 case "get_summary":
                     return handleGetSummary(userId, intent);
-                    
-                case "get_cashflow":
-                    return handleGetCashflow(userId);
-                    
-                case "list_recurring":
-                    return handleListRecurring(userId, intent);
-                    
-                case "delete_recurring":
-                    return handleDeleteRecurring(userId, intent);
                     
                 case "delete_transaction":
                     return handleDeleteTransaction(userId);
@@ -552,16 +510,16 @@ public class MessageProcessorService {
             if (count >= maxToShow) continue; // Count all but only show maxToShow
             
             String emoji = "Expense".equals(type) ? "💸" : "💰";
-            Object amount = tx.get("amount");
-            String category = (String) tx.get("category");
-            String description = (String) tx.get("description");
+            Object amountObj = tx.get("amount");
+            String categoryTx = (String) tx.get("category");
+            String descriptionTx = (String) tx.get("description");
             // Try both 'createdAt' (from Brahiam's API) and 'date' (fallback)
             String dateStr = extractDateFromTransaction(tx);
             
             // Format: 💸 $10,000 - gaseosa (Otros) - 02/12/2025
-            String descText = description != null && !description.isEmpty() ? description : category;
+            String descText = descriptionTx != null && !descriptionTx.isEmpty() ? descriptionTx : categoryTx;
             sb.append(String.format("%s $%,.0f - %s (%s) - %s\n", 
-                emoji, ((Number) amount).doubleValue(), descText, category, dateStr));
+                emoji, ((Number) amountObj).doubleValue(), descText, categoryTx, dateStr));
             count++;
         }
         
@@ -646,21 +604,21 @@ public class MessageProcessorService {
         // Build a better response
         String type = (String) lastTx.get("type");
         String emoji = "Income".equals(type) ? "💰" : "💸";
-        Double amount = lastTx.get("amount") != null ? ((Number) lastTx.get("amount")).doubleValue() : 0.0;
-        String description = (String) lastTx.get("description");
-        String category = (String) lastTx.get("category");
+        Double amountDeleted = lastTx.get("amount") != null ? ((Number) lastTx.get("amount")).doubleValue() : 0.0;
+        String descriptionDeleted = (String) lastTx.get("description");
+        String categoryDeleted = (String) lastTx.get("category");
         String typeText = "Income".equals(type) ? "ingreso" : "gasto";
         String modeIndicator = useMock ? "\n\n🧪 _[Modo prueba]_" : "";
         
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("✅ ¡Listo! Eliminé tu último %s:\n\n", typeText));
-        sb.append(String.format("%s *$%,.0f*\n", emoji, amount));
+        sb.append(String.format("%s *$%,.0f*\n", emoji, amountDeleted));
         
         // Always show description if available
-        if (description != null && !description.isEmpty()) {
-            sb.append(String.format("• Descripción: %s\n", description));
+        if (descriptionDeleted != null && !descriptionDeleted.isEmpty()) {
+            sb.append(String.format("• Descripción: %s\n", descriptionDeleted));
         }
-        sb.append(String.format("• Categoría: %s\n", category));
+        sb.append(String.format("• Categoría: %s\n", categoryDeleted));
         sb.append("\n📝 Tu saldo ha sido restaurado.");
         sb.append(modeIndicator);
         
@@ -727,12 +685,12 @@ public class MessageProcessorService {
         StringBuilder sb = new StringBuilder("📏 *Tus reglas financieras:*\n\n");
         
         for (Map<String, Object> rule : rules) {
-            String category = (String) rule.get("category");
+            String categoryRule = (String) rule.get("category");
             Object amountLimit = rule.get("amountLimit");
-            String period = (String) rule.get("period");
-            String periodText = translatePeriod(period);
+            String periodRule = (String) rule.get("period");
+            String periodText = translatePeriod(periodRule);
             
-            sb.append(String.format("• %s: $%s (%s)\n", category, amountLimit, periodText));
+            sb.append(String.format("• %s: $%s (%s)\n", categoryRule, amountLimit, periodText));
         }
         
         if (useMock) {
@@ -755,55 +713,6 @@ public class MessageProcessorService {
             case "yearly": return "Anual";
             default: return period;
         }
-    }
-
-    // ==================== NEW HANDLERS FOR BRAHIAM'S ENDPOINTS ====================
-
-    /**
-     * Handles creating recurring transactions (income or expense).
-     */
-    private String handleCreateRecurringTransaction(String userId, IntentResult intent, String type) {
-        // Validate amount - ask for clarification if missing
-        if (intent.getAmount() == null || intent.getAmount() <= 0) {
-            String typeText = "Income".equals(type) ? "ingreso" : "gasto";
-            String description = intent.getDescription() != null ? intent.getDescription() : "esa transacción";
-            return String.format("❓ Necesito saber el monto para registrar %s como %s recurrente.\n\n" +
-                "Por favor, indícame: \"Pago %s [MONTO] cada mes\"\n\n" +
-                "Ejemplo: \"Pago Netflix 50k cada mes\"",
-                description, typeText, description);
-        }
-        
-        if (useMock) {
-            String emoji = "Income".equals(type) ? "💰" : "💸";
-            String typeText = "Income".equals(type) ? "Ingreso" : "Gasto";
-            String freqText = translatePeriod(intent.getFrequency());
-            String dayInfo = intent.getDayOfMonth() != null ? " (día " + intent.getDayOfMonth() + ")" : "";
-            
-            return String.format("%s %s recurrente registrado!\n• Monto: $%,.0f %s%s\n• Categoría: %s\n• Descripción: %s\n\n🧪 _[Modo prueba]_",
-                emoji, typeText, intent.getAmount(), freqText, dayInfo, intent.getCategory(), intent.getDescription());
-        }
-        
-        Map<String, Object> result = coreApi.createRecurringTransaction(
-            userId, 
-            intent.getAmount(), 
-            type, 
-            intent.getCategory(), 
-            intent.getDescription(),
-            intent.getFrequency() != null ? intent.getFrequency() : "Monthly",
-            intent.getDayOfMonth()
-        );
-        
-        if (result.containsKey("error")) {
-            return "❌ No pude registrar la transacción recurrente. " + result.get("error");
-        }
-        
-        String emoji = "Income".equals(type) ? "💰" : "💸";
-        String typeText = "Income".equals(type) ? "Ingreso" : "Gasto";
-        String freqText = translatePeriod(intent.getFrequency());
-        String dayInfo = intent.getDayOfMonth() != null ? " (día " + intent.getDayOfMonth() + ")" : "";
-        
-        return String.format("%s ¡%s recurrente creado!\n• Monto: $%,.0f\n• Frecuencia: %s%s\n• Categoría: %s\n• Descripción: %s\n\nSe registrará automáticamente cada período.",
-            emoji, typeText, intent.getAmount(), freqText, dayInfo, intent.getCategory(), intent.getDescription());
     }
 
     /**
@@ -839,11 +748,11 @@ public class MessageProcessorService {
         for (Map<String, Object> tx : transactions) {
             String type = (String) tx.get("type");
             String emoji = "Expense".equals(type) ? "💸" : "💰";
-            Object amount = tx.get("amount");
-            String category = (String) tx.get("category");
-            String description = (String) tx.get("description");
+            Object amountObj = tx.get("amount");
+            String categoryTx = (String) tx.get("category");
+            String descriptionTx = (String) tx.get("description");
             
-            sb.append(String.format("%s $%s - %s (%s)\n", emoji, amount, category, description));
+            sb.append(String.format("%s $%s - %s (%s)\n", emoji, amountObj, categoryTx, descriptionTx));
         }
         
         sb.append(String.format("\n💵 *Total del día:* $%,.0f", totalAmount));
@@ -904,15 +813,15 @@ public class MessageProcessorService {
             if (shown >= 10) continue; // Count all but only show 10
             
             String emoji = "Expense".equals(type) ? "💸" : "💰";
-            String category = (String) tx.get("category");
-            String description = (String) tx.get("description");
+            String categoryTx = (String) tx.get("category");
+            String descriptionTx = (String) tx.get("description");
             // Use extractDateFromTransaction to handle both createdAt and date fields
             String dateStr = extractDateFromTransaction(tx);
             
             // Format: 💸 $10,000 - gaseosa (Otros) - 02/12/2025
-            String descText = description != null && !description.isEmpty() ? description : category;
+            String descText = descriptionTx != null && !descriptionTx.isEmpty() ? descriptionTx : categoryTx;
             sb.append(String.format("%s $%,.0f - %s (%s) - %s\n", 
-                emoji, amt, descText, category, dateStr));
+                emoji, amt, descText, categoryTx, dateStr));
             shown++;
         }
         
@@ -990,11 +899,11 @@ public class MessageProcessorService {
         for (Map<String, Object> tx : transactions) {
             String type = (String) tx.get("type");
             String emoji = "Expense".equals(type) ? "💸" : "💰";
-            Object amount = tx.get("amount");
-            String description = (String) tx.get("description");
+            Object amountObj = tx.get("amount");
+            String descriptionTx = (String) tx.get("description");
             String dateStr = extractDateFromTransaction(tx);
             
-            sb.append(String.format("%s $%s - %s %s\n", emoji, amount, description, dateStr));
+            sb.append(String.format("%s $%s - %s %s\n", emoji, amountObj, descriptionTx, dateStr));
         }
         
         sb.append(String.format("\n\n📊 *Total en \"%s\":* $%,.0f (%d transacciones)", query, totalAmount, count));
@@ -1103,13 +1012,13 @@ public class MessageProcessorService {
             sb.append("📉 *Desglose completo:*\n");
             
             for (Map<String, Object> cat : categories) {
-                String category = (String) cat.get("category");
+                String categoryName = (String) cat.get("category");
                 Double amount = ((Number) cat.get("totalAmount")).doubleValue();
                 Double percentage = cat.get("percentage") != null ? ((Number) cat.get("percentage")).doubleValue() : 0.0;
-                String emoji = getCategoryEmoji(category);
+                String emoji = getCategoryEmoji(categoryName);
                 
                 String bar = generateProgressBar(percentage);
-                sb.append(String.format("• %s %s: $%,.0f (%s %.1f%%)\n", emoji, category, amount, bar, percentage));
+                sb.append(String.format("• %s %s: $%,.0f (%s %.1f%%)\n", emoji, categoryName, amount, bar, percentage));
             }
             
             // Add helpful tip based on spending pattern
@@ -1149,282 +1058,6 @@ public class MessageProcessorService {
             case "regalos" -> "🎁";
             default -> "📦";
         };
-    }
-
-    /**
-     * Handles getting cashflow (recurring income vs expenses).
-     */
-    @SuppressWarnings("unchecked")
-    private String handleGetCashflow(String userId) {
-        if (useMock) {
-            return "💵 Función disponible solo con el API real.\n\n🧪 _[Modo prueba]_";
-        }
-        
-        Map<String, Object> result = coreApi.getCashflow(userId);
-        
-        if (result.containsKey("error")) {
-            return "❌ No pude obtener el flujo de caja. " + result.get("error");
-        }
-        
-        Double monthlyIncome = result.get("totalMonthlyIncome") != null ? ((Number) result.get("totalMonthlyIncome")).doubleValue() : 0.0;
-        Double monthlyExpenses = result.get("totalMonthlyExpenses") != null ? ((Number) result.get("totalMonthlyExpenses")).doubleValue() : 0.0;
-        Double netCashflow = result.get("netMonthlyCashflow") != null ? ((Number) result.get("netMonthlyCashflow")).doubleValue() : 0.0;
-        
-        StringBuilder sb = new StringBuilder("💵 *Tu flujo de caja mensual:*\n\n");
-        
-        // Get detailed recurring transactions for breakdown
-        Map<String, Object> recurringResult = coreApi.getRecurringTransactions(userId);
-        List<Map<String, Object>> recurring = null;
-        if (!recurringResult.containsKey("error")) {
-            recurring = (List<Map<String, Object>>) recurringResult.get("data");
-        }
-        
-        // Show income breakdown
-        sb.append("📈 *Ingresos fijos:* $").append(String.format("%,.0f", monthlyIncome)).append("\n");
-        if (recurring != null && !recurring.isEmpty()) {
-            for (Map<String, Object> rec : recurring) {
-                if ("Income".equals(rec.get("type"))) {
-                    Double amount = ((Number) rec.get("amount")).doubleValue();
-                    String description = (String) rec.get("description");
-                    String category = (String) rec.get("category");
-                    String displayName = (description != null && !description.isEmpty()) ? description : category;
-                    String frequency = translatePeriod((String) rec.get("frequency"));
-                    sb.append(String.format("   • 💰 $%,.0f - %s (%s)\n", amount, displayName, frequency));
-                }
-            }
-        }
-        
-        // Show expense breakdown
-        sb.append("\n📉 *Gastos fijos:* $").append(String.format("%,.0f", monthlyExpenses)).append("\n");
-        if (recurring != null && !recurring.isEmpty()) {
-            for (Map<String, Object> rec : recurring) {
-                if ("Expense".equals(rec.get("type"))) {
-                    Double amount = ((Number) rec.get("amount")).doubleValue();
-                    String description = (String) rec.get("description");
-                    String category = (String) rec.get("category");
-                    String displayName = (description != null && !description.isEmpty()) ? description : category;
-                    String frequency = translatePeriod((String) rec.get("frequency"));
-                    sb.append(String.format("   • 💸 $%,.0f - %s (%s)\n", amount, displayName, frequency));
-                }
-            }
-        }
-        
-        // Net cashflow
-        sb.append(String.format("\n💰 *Dinero libre mensual:* $%,.0f", netCashflow));
-        
-        if (netCashflow > 0) {
-            sb.append("\n\n✅ ¡Excelente! Tienes un flujo positivo.");
-        } else if (netCashflow < 0) {
-            sb.append("\n\n⚠️ Cuidado: tus gastos fijos superan tus ingresos fijos.");
-        }
-        
-        return sb.toString();
-    }
-
-    /**
-     * Handles listing recurring transactions.
-     * Now supports filtering by type (Income/Expense) when specified.
-     */
-    @SuppressWarnings("unchecked")
-    private String handleListRecurring(String userId, IntentResult intent) {
-        if (useMock) {
-            return "🔄 Función disponible solo con el API real.\n\n🧪 _[Modo prueba]_";
-        }
-        
-        Map<String, Object> result = coreApi.getRecurringTransactions(userId);
-        
-        if (result.containsKey("error")) {
-            return "❌ No pude obtener las transacciones recurrentes. " + result.get("error");
-        }
-        
-        List<Map<String, Object>> recurring = (List<Map<String, Object>>) result.get("data");
-        
-        if (recurring == null || recurring.isEmpty()) {
-            return "🔄 No tienes transacciones recurrentes configuradas.\n\n💡 Puedes crear una diciendo: \"Me pagan 2M cada mes\" o \"Pago Netflix mensualmente\"";
-        }
-        
-        // Get filter type from intent
-        String filterType = intent.getType(); // "Income", "Expense", or null
-        
-        // Filter by type if specified
-        List<Map<String, Object>> filteredRecurring = recurring;
-        String title;
-        
-        if ("Income".equalsIgnoreCase(filterType)) {
-            filteredRecurring = recurring.stream()
-                .filter(rec -> "Income".equals(rec.get("type")))
-                .toList();
-            title = "💰 *Tus ingresos fijos/recurrentes:*\n\n";
-        } else if ("Expense".equalsIgnoreCase(filterType)) {
-            filteredRecurring = recurring.stream()
-                .filter(rec -> "Expense".equals(rec.get("type")))
-                .toList();
-            title = "💸 *Tus gastos fijos/recurrentes:*\n\n";
-        } else {
-            title = "🔄 *Tus transacciones recurrentes:*\n\n";
-        }
-        
-        if (filteredRecurring.isEmpty()) {
-            if ("Income".equalsIgnoreCase(filterType)) {
-                return "💰 No tienes ingresos recurrentes configurados.\n\n💡 Puedes crear uno diciendo: \"Me pagan 2M cada mes\"";
-            } else if ("Expense".equalsIgnoreCase(filterType)) {
-                return "💸 No tienes gastos fijos configurados.\n\n💡 Puedes crear uno diciendo: \"Pago Netflix mensualmente\"";
-            }
-        }
-        
-        StringBuilder sb = new StringBuilder(title);
-        
-        // Calculate totals for filtered transactions
-        double totalAmount = 0;
-        
-        for (Map<String, Object> rec : filteredRecurring) {
-            String type = (String) rec.get("type");
-            String emoji = "Income".equals(type) ? "💰" : "💸";
-            Double amount = ((Number) rec.get("amount")).doubleValue();
-            String description = (String) rec.get("description");
-            String category = (String) rec.get("category");
-            String displayName = (description != null && !description.isEmpty()) ? description : category;
-            String frequency = translatePeriod((String) rec.get("frequency"));
-            Boolean isActive = (Boolean) rec.get("isActive");
-            String status = isActive != null && isActive ? "" : " ⏸️";
-            
-            sb.append(String.format("%s $%,.0f - %s (%s)%s\n", emoji, amount, displayName, frequency, status));
-            totalAmount += amount;
-        }
-        
-        // Add total at the end
-        sb.append(String.format("\n📊 *Total:* $%,.0f (%d %s)", 
-            totalAmount, 
-            filteredRecurring.size(),
-            filteredRecurring.size() == 1 ? "transacción" : "transacciones"));
-        
-        return sb.toString();
-    }
-
-    /**
-     * Handles deleting a recurring transaction.
-     * Improved to ask for confirmation when search is ambiguous.
-     */
-    @SuppressWarnings("unchecked")
-    private String handleDeleteRecurring(String userId, IntentResult intent) {
-        if (useMock) {
-            return "🔄 Función disponible solo con el API real.\n\n🧪 _[Modo prueba]_";
-        }
-        
-        // First get recurring transactions to find the one to delete
-        Map<String, Object> result = coreApi.getRecurringTransactions(userId);
-        
-        if (result.containsKey("error")) {
-            return "❌ No pude obtener las transacciones recurrentes. " + result.get("error");
-        }
-        
-        List<Map<String, Object>> recurring = (List<Map<String, Object>>) result.get("data");
-        
-        if (recurring == null || recurring.isEmpty()) {
-            return "🔄 No tienes transacciones recurrentes para eliminar.";
-        }
-        
-        // Try to find by description or category
-        String searchTerm = intent.getDescription() != null ? intent.getDescription() : intent.getCategory();
-        List<Map<String, Object>> matches = new java.util.ArrayList<>();
-        
-        if (searchTerm != null && !searchTerm.isEmpty()) {
-            for (Map<String, Object> rec : recurring) {
-                String desc = (String) rec.get("description");
-                String cat = (String) rec.get("category");
-                if ((desc != null && desc.toLowerCase().contains(searchTerm.toLowerCase())) ||
-                    (cat != null && cat.toLowerCase().contains(searchTerm.toLowerCase()))) {
-                    matches.add(rec);
-                }
-            }
-        }
-        
-        // If multiple matches, ask for clarification
-        if (matches.size() > 1) {
-            StringBuilder sb = new StringBuilder("🤔 Encontré varias opciones. ¿Cuál querías eliminar?\n\n");
-            for (int i = 0; i < matches.size(); i++) {
-                Map<String, Object> rec = matches.get(i);
-                String type = (String) rec.get("type");
-                String emoji = "Income".equals(type) ? "💰" : "💸";
-                Double amount = ((Number) rec.get("amount")).doubleValue();
-                String description = (String) rec.get("description");
-                String category = (String) rec.get("category");
-                String displayName = (description != null && !description.isEmpty()) ? description : category;
-                String frequency = translatePeriod((String) rec.get("frequency"));
-                
-                sb.append(String.format("%d. %s $%,.0f - %s (%s)\n", i + 1, emoji, amount, displayName, frequency));
-            }
-            sb.append("\n💡 Dime el número o nombre específico para eliminar.");
-            return sb.toString();
-        }
-        
-        // If no matches and search term is null or generic, ask for clarification
-        if (matches.isEmpty() && (searchTerm == null || searchTerm.isEmpty())) {
-            // Check if this might be a confirmation response (number or "elimina el 1")
-            // For now, show a list to choose from
-            StringBuilder sb = new StringBuilder("🤔 ¿Cuál transacción recurrente querías eliminar?\n\n");
-            
-            // Show first 5 recurring transactions as options
-            int limit = Math.min(recurring.size(), 5);
-            for (int i = 0; i < limit; i++) {
-                Map<String, Object> rec = recurring.get(i);
-                String type = (String) rec.get("type");
-                String emoji = "Income".equals(type) ? "💰" : "💸";
-                Double amount = ((Number) rec.get("amount")).doubleValue();
-                String description = (String) rec.get("description");
-                String category = (String) rec.get("category");
-                String displayName = (description != null && !description.isEmpty()) ? description : category;
-                String frequency = translatePeriod((String) rec.get("frequency"));
-                
-                sb.append(String.format("%d. %s $%,.0f - %s (%s)\n", i + 1, emoji, amount, displayName, frequency));
-            }
-            
-            if (recurring.size() > 5) {
-                sb.append(String.format("... y %d más.\n", recurring.size() - 5));
-            }
-            
-            sb.append("\n💡 Escribe el nombre o número del que quieras eliminar.");
-            return sb.toString();
-        }
-        
-        // Get the transaction to delete
-        Map<String, Object> toDelete;
-        if (!matches.isEmpty()) {
-            toDelete = matches.get(0);
-        } else {
-            // Last resort: try to find by type (Income/Expense) based on intent context
-            String typeFilter = intent.getType();
-            if (typeFilter != null) {
-                for (Map<String, Object> rec : recurring) {
-                    if (typeFilter.equalsIgnoreCase((String) rec.get("type"))) {
-                        toDelete = rec;
-                        break;
-                    }
-                }
-            }
-            // If still no match, use first item (backward compatibility)
-            toDelete = recurring.get(0);
-        }
-        
-        String recId = (String) toDelete.get("id");
-        Map<String, Object> deleteResult = coreApi.deleteRecurringTransaction(recId);
-        
-        if (deleteResult.containsKey("error")) {
-            return "❌ No pude eliminar la transacción recurrente. " + deleteResult.get("error");
-        }
-        
-        // Build a better response
-        String type = (String) toDelete.get("type");
-        String emoji = "Income".equals(type) ? "💰" : "💸";
-        String description = (String) toDelete.get("description");
-        String category = (String) toDelete.get("category");
-        String displayName = (description != null && !description.isEmpty()) ? description : category;
-        Double amount = ((Number) toDelete.get("amount")).doubleValue();
-        String frequency = translatePeriod((String) toDelete.get("frequency"));
-        String typeText = "Income".equals(type) ? "ingreso" : "gasto";
-        
-        return String.format("✅ ¡Listo! Eliminé tu %s recurrente:\n\n%s *%s*\n• Monto: $%,.0f\n• Frecuencia: %s\n\n📝 Ya no se registrará este %s automáticamente.", 
-            typeText, emoji, displayName, amount, frequency, typeText);
     }
 
     // ==================== UTILITY METHODS ====================
