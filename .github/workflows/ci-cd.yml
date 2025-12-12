@@ -74,16 +74,20 @@ jobs:
               -p 5002:8080 \
               -e SPRING_PROFILES_ACTIVE=production \
               -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-              -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
+              -e "SPRING_AI_OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
               -e "JWT_SECRET=${{ secrets.JWT_SECRET }}" \
               -e "JWT_EXPIRATION=86400000" \
               -e "SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/riwiwallet_db" \
-              -e "DB_USERNAME=riwi_user" \
-              -e "DB_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC" \
               -e "SPRING_DATASOURCE_USERNAME=riwi_user" \
               -e "SPRING_DATASOURCE_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC" \
               -e "MS_CORE_BASE_URL=http://netapi_gestor_finanzas:8080" \
               -e "MS_CORE_API_KEY=riwi-internal-service-key-2024-secure" \
+              -e "TELEGRAM_BOT_USERNAME=RiwiWalletBot" \
+              -e "APP_FRONTEND_URL=https://tu-frontend.com" \
+              -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" \
+              -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}" \
+              -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" \
+              -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_MICROSOFT_CLIENT_SECRET=${{ secrets.MICROSOFT_CLIENT_SECRET }}" \
               --memory="512m" \
               --cpus="0.75" \
               ${{ env.DOCKER_IMAGE }}:latest
