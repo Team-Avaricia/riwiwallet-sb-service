@@ -74,8 +74,8 @@ jobs:
               -p 5002:8080 \
               -e SPRING_PROFILES_ACTIVE=production \
               -e API_NET_URL=http://netapi_gestor_finanzas:8080 \
-              -e TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
-              -e OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
+              -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
+              -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
               -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/riwiwallet_db \
               -e SPRING_DATASOURCE_USERNAME=riwi_user \
               -e SPRING_DATASOURCE_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC \
