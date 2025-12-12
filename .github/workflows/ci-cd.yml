@@ -73,7 +73,6 @@ jobs:
               --network riwi_network \
               -p 5002:8080 \
               -e SPRING_PROFILES_ACTIVE=production \
-              -e API_NET_URL=http://netapi_gestor_finanzas:8080 \
               -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
               -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
               -e "JWT_SECRET=${{ secrets.JWT_SECRET }}" \
@@ -83,6 +82,8 @@ jobs:
               -e "DB_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC" \
               -e "SPRING_DATASOURCE_USERNAME=riwi_user" \
               -e "SPRING_DATASOURCE_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC" \
+              -e "MS_CORE_BASE_URL=http://netapi_gestor_finanzas:8080" \
+              -e "MS_CORE_API_KEY=riwi-internal-service-key-2024-secure" \
               --memory="512m" \
               --cpus="0.75" \
               ${{ env.DOCKER_IMAGE }}:latest
