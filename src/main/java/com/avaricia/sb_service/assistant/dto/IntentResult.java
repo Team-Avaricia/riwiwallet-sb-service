@@ -10,13 +10,10 @@ public class IntentResult {
     private String category;
     private String description;
     private String type; // "Expense" or "Income"
-    private String period; // "Monthly", "Weekly", etc.
+    private String period; // "Monthly", "Weekly", etc. - for rules
     private String response; // Respuesta para el usuario cuando es una pregunta general
     
-    // New fields for advanced queries
-    private String frequency; // "Daily", "Weekly", "Monthly", "Yearly" for recurring transactions
-    private Integer dayOfMonth; // For monthly recurring (1-31)
-    private Integer dayOfWeek; // For weekly recurring (0=Sun, 1=Mon...)
+    // Fields for advanced queries
     private String startDate; // For date range queries (ISO format)
     private String endDate; // For date range queries (ISO format)
     private String searchQuery; // For searching transactions by description
@@ -81,30 +78,6 @@ public class IntentResult {
         this.response = response;
     }
     
-    public String getFrequency() {
-        return frequency;
-    }
-    
-    public void setFrequency(String frequency) {
-        this.frequency = frequency;
-    }
-    
-    public Integer getDayOfMonth() {
-        return dayOfMonth;
-    }
-    
-    public void setDayOfMonth(Integer dayOfMonth) {
-        this.dayOfMonth = dayOfMonth;
-    }
-    
-    public Integer getDayOfWeek() {
-        return dayOfWeek;
-    }
-    
-    public void setDayOfWeek(Integer dayOfWeek) {
-        this.dayOfWeek = dayOfWeek;
-    }
-    
     public String getStartDate() {
         return startDate;
     }
@@ -139,8 +112,6 @@ public class IntentResult {
                 ", type='" + type + '\'' +
                 ", period='" + period + '\'' +
                 ", response='" + response + '\'' +
-                ", frequency='" + frequency + '\'' +
-                ", dayOfMonth=" + dayOfMonth +
                 ", startDate='" + startDate + '\'' +
                 ", endDate='" + endDate + '\'' +
                 ", searchQuery='" + searchQuery + '\'' +

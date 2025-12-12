@@ -6,7 +6,7 @@ AI-powered financial assistant microservice for RiwiWallet. Integrates with Tele
 
 - **Multi-platform Chat Integration**: Telegram Bot API + WhatsApp Cloud API
 - **Voice Message Support**: Audio transcription via OpenAI Whisper
-- **AI-Powered Intent Classification**: GPT-4o-mini for understanding 18+ financial intents
+- **AI-Powered Intent Classification**: GPT-4o-mini for understanding financial intents
 - **Conversation History**: Context-aware responses with 30-minute TTL
 - **Mock Mode**: In-memory testing without external API dependencies
 
@@ -16,17 +16,12 @@ AI-powered financial assistant microservice for RiwiWallet. Integrates with Tele
 |--------|-------------|---------|
 | `create_expense` | Register an expense | "Gasté 50k en comida" |
 | `create_income` | Register income | "Recibí mi sueldo de 2M" |
-| `create_recurring_expense` | Create recurring expense | "Pago Netflix mensualmente" |
-| `create_recurring_income` | Create recurring income | "Me pagan 2M cada mes" |
 | `list_transactions` | View recent transactions | "Muéstrame mis gastos" |
 | `list_transactions_by_date` | Query by specific date | "¿Cuánto gasté el 15 de noviembre?" |
 | `list_transactions_by_range` | Query by date range | "Gastos del 1 al 15 de diciembre" |
 | `search_transactions` | Search by description | "¿Cuánto he pagado de Netflix?" |
 | `get_balance` | Check current balance | "¿Cuánto dinero tengo?" |
 | `get_summary` | Expense summary by category | "¿En qué gasto más?" |
-| `get_cashflow` | Monthly cashflow analysis | "¿Cuál es mi flujo de caja?" |
-| `list_recurring` | View recurring transactions | "Mis gastos fijos" |
-| `delete_recurring` | Remove recurring transaction | "Cancela mi pago de Netflix" |
 | `delete_transaction` | Delete last transaction | "Elimina mi último gasto" |
 | `create_rule` | Create budget rule | "Pon un límite de 500k para comida" |
 | `list_rules` | View budget rules | "¿Cuáles son mis límites?" |

@@ -38,3 +38,13 @@ spring.security.oauth2.client.provider.microsoft.user-name-attribute=name
 
 # OpenAI Configuration
 spring.ai.openai.api-key=${OPENAI_API_KEY}
+
+# Core MS API (.NET Backend)
+ms.core.base-url=http://localhost:5000
+# API Key for internal service authentication (must match .NET InternalApi:ApiKey)
+ms.core.api-key=riwi-internal-service-key-2024-secure
+
+# Telegram Bot Configuration
+telegram.bot.token=${TELEGRAM_BOT_TOKEN}
+telegram.bot.username=YourBotUsername
+

@@ -18,6 +18,7 @@ import java.util.Map;
 /**
  * Service for communicating with the Core MS (.NET service).
  * Handles all HTTP requests to the financial management API.
+ * Uses API Key authentication for internal service communication.
  */
 @Service
 public class CoreApiService {
@@ -25,11 +26,25 @@ public class CoreApiService {
     private final RestTemplate restTemplate;
     private final String baseUrl;
     private final ObjectMapper objectMapper;
+    private final String apiKey;
 
-    public CoreApiService(@Value("${ms.core.base-url}") String baseUrl) {
+    public CoreApiService(
+            @Value("${ms.core.base-url}") String baseUrl,
+            @Value("${ms.core.api-key:riwi-internal-service-key-2024-secure}") String apiKey) {
         this.restTemplate = new RestTemplate();
         this.baseUrl = baseUrl;
         this.objectMapper = new ObjectMapper();
+        this.apiKey = apiKey;
+    }
+
+    /**
+     * Create HTTP headers with API Key for internal service authentication
+     */
+    private HttpHeaders createHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Api-Key", apiKey);
+        return headers;
     }
 
     // ==================== USER ENDPOINTS ====================
@@ -116,12 +131,17 @@ public class CoreApiService {
                                                    String category, String description, String source) {
         String url = baseUrl + "/api/Transaction";
         
+        // Use category as description if description is null or empty
+        String finalDescription = (description != null && !description.isEmpty()) 
+            ? description 
+            : category;
+        
         Map<String, Object> body = new HashMap<>();
         body.put("userId", userId);
         body.put("amount", amount);
         body.put("type", type);
         body.put("category", category);
-        body.put("description", description);
+        body.put("description", finalDescription);
         body.put("source", source);
         
         return postRequest(url, body);
@@ -205,9 +225,24 @@ public class CoreApiService {
     }
 
     public Map<String, Object> getTransactionsByRange(String userId, String startDate, String endDate) {
+        return getTransactionsByRange(userId, startDate, endDate, null);
+    }
+
+    /**
+     * Get transactions within a date range with optional type filter.
+     * @param userId The user ID
+     * @param startDate Start date in YYYY-MM-DD format
+     * @param endDate End date in YYYY-MM-DD format
+     * @param type Optional filter: "Income" or "Expense". Null returns all transactions.
+     * @return Map containing the transactions data
+     */
+    public Map<String, Object> getTransactionsByRange(String userId, String startDate, String endDate, String type) {
         String utcStartDate = convertToUtcFormat(startDate, true);
         String utcEndDate = convertToUtcFormat(endDate, false);
         String url = baseUrl + "/api/Transaction/user/" + userId + "/range?startDate=" + utcStartDate + "&endDate=" + utcEndDate;
+        if (type != null && !type.isEmpty()) {
+            url += "&type=" + type;
+        }
         return getRequest(url);
     }
 
@@ -234,67 +269,12 @@ public class CoreApiService {
         return getRequest(url);
     }
 
-    // ==================== RECURRING TRANSACTION ENDPOINTS ====================
-
-    public Map<String, Object> createRecurringTransaction(String userId, Double amount, String type,
-                                                           String category, String description,
-                                                           String frequency, Integer dayOfMonth) {
-        String url = baseUrl + "/api/RecurringTransaction";
-        
-        // Format dates as ISO timestamp (required by Brahiam's API)
-        String now = java.time.LocalDateTime.now().toString();
-        String farFuture = java.time.LocalDateTime.now().plusYears(10).toString();
-        
-        Map<String, Object> body = new HashMap<>();
-        body.put("userId", userId);
-        body.put("amount", amount);
-        body.put("type", type);
-        body.put("category", category);
-        body.put("description", description);
-        body.put("frequency", frequency);
-        body.put("startDate", now);
-        body.put("endDate", farFuture); // Required by API - set to far future for "indefinite"
-        body.put("dayOfMonth", dayOfMonth != null ? dayOfMonth : 1);
-        body.put("dayOfWeek", 1); // Default to Monday if weekly
-        
-        return postRequest(url, body);
-    }
-
-    public Map<String, Object> getRecurringTransactions(String userId) {
-        String url = baseUrl + "/api/RecurringTransaction/user/" + userId;
-        return getRequest(url);
-    }
-
-    public Map<String, Object> getCashflow(String userId) {
-        String url = baseUrl + "/api/RecurringTransaction/user/" + userId + "/cashflow";
-        return getRequest(url);
-    }
-
-    public Map<String, Object> updateRecurringTransaction(String recurringId, Map<String, Object> updates) {
-        String url = baseUrl + "/api/RecurringTransaction/" + recurringId;
-        return putRequest(url, updates);
-    }
-
-    public Map<String, Object> toggleRecurringTransaction(String recurringId, boolean isActive) {
-        String url = baseUrl + "/api/RecurringTransaction/" + recurringId + "/toggle";
-        Map<String, Object> body = new HashMap<>();
-        body.put("isActive", isActive);
-        return patchRequest(url, body);
-    }
-
-    public Map<String, Object> deleteRecurringTransaction(String recurringId) {
-        String url = baseUrl + "/api/RecurringTransaction/" + recurringId;
-        return deleteRequest(url);
-    }
-
     // ==================== HELPER METHODS ====================
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> postRequest(String url, Map<String, Object> body) {
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
+            HttpHeaders headers = createHeaders();
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             
             System.out.println("📤 POST " + url);
@@ -327,7 +307,10 @@ public class CoreApiService {
         try {
             System.out.println("📤 GET " + url);
             
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
+            HttpHeaders headers = createHeaders();
+            HttpEntity<?> request = new HttpEntity<>(headers);
+            
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, request, String.class);
             
             System.out.println("📥 Response: " + response.getStatusCode());
             
@@ -361,7 +344,10 @@ public class CoreApiService {
         try {
             System.out.println("📤 DELETE " + url);
             
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, null, String.class);
+            HttpHeaders headers = createHeaders();
+            HttpEntity<?> request = new HttpEntity<>(headers);
+            
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, request, String.class);
             
             System.out.println("📥 Response: " + response.getStatusCode());
             
@@ -387,9 +373,7 @@ public class CoreApiService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> patchRequest(String url, Map<String, Object> body) {
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
+            HttpHeaders headers = createHeaders();
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             
             System.out.println("📤 PATCH " + url);
@@ -410,40 +394,6 @@ public class CoreApiService {
             
         } catch (Exception e) {
             System.err.println("❌ Error in PATCH " + url + ": " + e.getMessage());
-            Map<String, Object> error = new HashMap<>();
-            error.put("success", false);
-            error.put("error", e.getMessage());
-            return error;
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> putRequest(String url, Map<String, Object> body) {
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            
-            System.out.println("📤 PUT " + url);
-            System.out.println("   Body: " + body);
-            
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PUT, request, String.class);
-            
-            System.out.println("📥 Response: " + response.getStatusCode());
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("status", response.getStatusCode().value());
-            
-            if (response.getBody() != null && !response.getBody().isEmpty()) {
-                result.putAll(objectMapper.readValue(response.getBody(), Map.class));
-            }
-            
-            return result;
-            
-        } catch (Exception e) {
-            System.err.println("❌ Error in PUT " + url + ": " + e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("error", e.getMessage());
