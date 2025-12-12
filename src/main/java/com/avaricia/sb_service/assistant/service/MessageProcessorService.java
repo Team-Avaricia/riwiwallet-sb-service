@@ -99,8 +99,25 @@ public class MessageProcessorService {
             "list_rules"
         );
         
+        // Skip humanization for filtered queries (ingresos/gastos específicos)
+        // The humanization can mix data incorrectly
+        String queryLower = userQuery != null ? userQuery.toLowerCase() : "";
+        boolean isFilteredQuery = queryLower.contains("ingreso") || 
+                                   queryLower.contains("gané") || 
+                                   queryLower.contains("ganancia") ||
+                                   queryLower.contains("recibí") ||
+                                   (queryLower.contains("cuánto") && queryLower.contains("gan"));
+        
+        // Don't humanize filtered queries to avoid mixing data
+        if (isFilteredQuery && ("list_transactions_by_range".equals(intent) || 
+                                "list_transactions".equals(intent))) {
+            System.out.println("⏭️ Skipping humanization for filtered query: " + userQuery);
+            return response;
+        }
+        
         // Only humanize for specific intents and non-error responses
-        if (humanizeIntents.contains(intent) && !response.startsWith("❌") && response.length() > 50) {
+        // Guard against null intent to avoid NullPointerException
+        if (intent != null && humanizeIntents.contains(intent) && !response.startsWith("❌") && response.length() > 50) {
             try {
                 return intentClassifier.humanizeResponse(response, userQuery, intent);
             } catch (Exception e) {
@@ -251,7 +268,14 @@ public class MessageProcessorService {
      */
     private String executeIntent(String userId, IntentResult intent) {
         try {
-            switch (intent.getIntent()) {
+            // Handle null intent - return the response directly if available
+            String intentType = intent.getIntent();
+            if (intentType == null) {
+                return intent.getResponse() != null ? intent.getResponse() : 
+                       "¡Hola! Soy tu asistente financiero. ¿En qué puedo ayudarte?";
+            }
+            
+            switch (intentType) {
                 case "validate_expense":
                     return handleValidateExpense(userId, intent);
                     
@@ -325,10 +349,40 @@ public class MessageProcessorService {
                    "💡 Ejemplo: \"¿Puedo gastar 50000 en ropa?\"";
         }
         
-        // Handle null/missing category - replace with descriptive text
+        // Handle null/missing/ambiguous category - ask for clarification
         String category = intent.getCategory();
-        if (category == null || category.isEmpty() || category.equalsIgnoreCase("null")) {
-            category = "eso";
+        String description = intent.getDescription();
+        
+        // List of ambiguous terms that need clarification
+        boolean isAmbiguousCategory = category == null || category.isEmpty() || 
+            category.equalsIgnoreCase("null") ||
+            category.equalsIgnoreCase("eso") ||
+            category.equalsIgnoreCase("esto") ||
+            category.equalsIgnoreCase("aquello") ||
+            category.equalsIgnoreCase("Otros");
+        
+        boolean isAmbiguousDescription = description == null || description.isEmpty() ||
+            description.equalsIgnoreCase("esto") ||
+            description.equalsIgnoreCase("eso") ||
+            description.equalsIgnoreCase("aquello") ||
+            description.equalsIgnoreCase("algo");
+        
+        // If both category and description are ambiguous, ask for clarification
+        if (isAmbiguousCategory && isAmbiguousDescription) {
+            return String.format(
+                "🤔 ¿Gastar $%,.0f en *qué* exactamente?\n\n" +
+                "💡 Necesito saber en qué quieres gastar para darte una mejor recomendación.\n\n" +
+                "Por ejemplo:\n" +
+                "• \"¿Puedo gastar $%,.0f en ropa?\"\n" +
+                "• \"¿Me alcanza para una cena de $%,.0f?\"\n" +
+                "• \"¿Debería gastar $%,.0f en entretenimiento?\"",
+                amount, amount, amount, amount
+            );
+        }
+        
+        // Use description as category if category is ambiguous but description is clear
+        if (isAmbiguousCategory && !isAmbiguousDescription) {
+            category = description;
         }
         
         response.append("🤔 *Sobre gastar $").append(String.format("%,.0f", amount));
@@ -337,43 +391,88 @@ public class MessageProcessorService {
         // Check if user has rules for this category
         boolean hasRule = false;
         Double categoryLimit = null;
+        String rulePeriod = null;
         
         if (!rulesResult.containsKey("error") && rulesResult.containsKey("data")) {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> rules = (List<Map<String, Object>>) rulesResult.get("data");
             for (Map<String, Object> rule : rules) {
                 String ruleCategory = (String) rule.get("category");
-                if (ruleCategory != null && ruleCategory.equalsIgnoreCase(intent.getCategory())) {
+                // Check for exact match OR "General" rule (applies to all categories)
+                if (ruleCategory != null && 
+                    (ruleCategory.equalsIgnoreCase(category) || ruleCategory.equalsIgnoreCase("General"))) {
                     hasRule = true;
                     categoryLimit = ((Number) rule.get("amountLimit")).doubleValue();
+                    rulePeriod = (String) rule.get("period");
                     break;
                 }
             }
         }
         
         if (hasRule && categoryLimit != null) {
-            if (intent.getAmount() > categoryLimit) {
-                response.append("⚠️ Tienes un límite de $").append(String.format("%,.0f", categoryLimit));
-                response.append(" para ").append(intent.getCategory()).append(".\n");
-                response.append("Este gasto excedería tu límite.\n\n");
-                response.append("💡 *Recomendación:* Considera si realmente lo necesitas o busca una alternativa más económica.");
+            // Calculate how much user has already spent in this category for the rule period
+            double spentInCategory = calculateSpentInPeriod(userId, category, rulePeriod, transactionsResult);
+            double remainingBudget = categoryLimit - spentInCategory;
+            double percentUsed = (spentInCategory / categoryLimit) * 100;
+            String periodText = translatePeriod(rulePeriod);
+            
+            response.append("📏 *Tu presupuesto ").append(periodText.toLowerCase()).append(" para ").append(category).append(":*\n");
+            response.append("• Límite: $").append(String.format("%,.0f", categoryLimit)).append("\n");
+            response.append("• Ya gastaste: $").append(String.format("%,.0f", spentInCategory));
+            response.append(" (").append(String.format("%.0f", percentUsed)).append("%)\n");
+            response.append("• Disponible: $").append(String.format("%,.0f", Math.max(0, remainingBudget))).append("\n\n");
+            
+            if (amount > remainingBudget) {
+                // Would exceed the remaining budget
+                if (remainingBudget <= 0) {
+                    response.append("🚫 *¡Ya agotaste tu presupuesto ").append(periodText.toLowerCase()).append("!*\n\n");
+                    response.append("💡 *Recomendación:* Este gasto de $").append(String.format("%,.0f", amount));
+                    response.append(" excedería tu límite por $").append(String.format("%,.0f", amount - remainingBudget)).append(".\n");
+                    response.append("Considera esperar al próximo período o ajustar tu presupuesto.");
+                } else {
+                    response.append("⚠️ *Este gasto excedería tu presupuesto disponible.*\n\n");
+                    response.append("💡 *Recomendación:* Solo te quedan $").append(String.format("%,.0f", remainingBudget));
+                    response.append(" disponibles. Este gasto de $").append(String.format("%,.0f", amount));
+                    response.append(" te dejaría $").append(String.format("%,.0f", amount - remainingBudget)).append(" por encima del límite.\n\n");
+                    response.append("Podrías:\n");
+                    response.append("• Gastar máximo $").append(String.format("%,.0f", remainingBudget)).append("\n");
+                    response.append("• Esperar al próximo período\n");
+                    response.append("• Ajustar tu presupuesto si realmente lo necesitas");
+                }
+            } else if (amount > remainingBudget * 0.8) {
+                // Would use more than 80% of remaining budget
+                response.append("⚡ *Está dentro del presupuesto, pero ajustado.*\n\n");
+                response.append("💡 *Recomendación:* Después de este gasto te quedarían solo $");
+                response.append(String.format("%,.0f", remainingBudget - amount)).append(" para el resto del período.\n\n");
+                response.append("Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", amount));
+                response.append(" en ").append(description != null ? description : category).append("\"");
             } else {
-                response.append("✅ Está dentro de tu presupuesto de $").append(String.format("%,.0f", categoryLimit));
-                response.append(" para ").append(intent.getCategory()).append(".\n\n");
-                response.append("💡 Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", intent.getAmount()));
-                response.append(" en ").append(intent.getDescription() != null ? intent.getDescription() : intent.getCategory()).append("\"");
+                // Comfortable within budget
+                response.append("✅ *¡Está dentro de tu presupuesto!*\n\n");
+                response.append("💡 Después de este gasto aún te quedarían $");
+                response.append(String.format("%,.0f", remainingBudget - amount)).append(" disponibles.\n\n");
+                response.append("Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", amount));
+                response.append(" en ").append(description != null ? description : category).append("\"");
             }
         } else {
-            // No specific rule, give general advice
-            response.append("📊 No tienes un límite configurado para ").append(category).append(".\n\n");
-            response.append("💡 *Consejos antes de gastar:*\n");
+            // No specific rule - check if user has ANY spending in this category
+            double spentInCategory = calculateSpentInPeriod(userId, category, "Monthly", transactionsResult);
+            
+            if (spentInCategory > 0) {
+                response.append("📊 *No tienes un límite para ").append(category).append("*, pero este mes ya gastaste $");
+                response.append(String.format("%,.0f", spentInCategory)).append(" en esta categoría.\n\n");
+                response.append("Con este gasto de $").append(String.format("%,.0f", amount));
+                response.append(" llevarías $").append(String.format("%,.0f", spentInCategory + amount)).append(" ").append(category.toLowerCase()).append(".\n\n");
+            } else {
+                response.append("📊 No tienes un límite configurado para ").append(category).append(".\n\n");
+            }
+            
+            response.append("💡 *Antes de gastar, considera:*\n");
             response.append("• ¿Es una necesidad o un gusto?\n");
             response.append("• ¿Afecta tus metas de ahorro?\n");
-            response.append("• ¿Tienes un fondo de emergencia?\n\n");
-            String whatToSay = intent.getDescription() != null ? intent.getDescription() : category;
-            if (whatToSay.equals("eso")) {
-                whatToSay = "[categoría]";
-            }
+            response.append("• ¿Quieres establecer un límite para esta categoría?\n\n");
+            
+            String whatToSay = description != null ? description : category;
             response.append("Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", amount));
             response.append(" en ").append(whatToSay).append("\"");
         }
@@ -381,6 +480,106 @@ public class MessageProcessorService {
         String modeIndicator = useMock ? "\n\n🧪 _[Modo prueba - No se registró ningún gasto]_" : "";
         
         return response.toString() + modeIndicator;
+    }
+    
+    /**
+     * Calculates how much the user has spent in a specific category for the given period.
+     */
+    @SuppressWarnings("unchecked")
+    private double calculateSpentInPeriod(String userId, String category, String period, Map<String, Object> transactionsResult) {
+        // Get date range based on period
+        java.time.LocalDate now = java.time.LocalDate.now();
+        java.time.LocalDate startDate;
+        
+        if (period == null) period = "Monthly";
+        
+        switch (period.toLowerCase()) {
+            case "daily":
+                startDate = now;
+                break;
+            case "weekly":
+                // Use calendar week (Monday to Sunday)
+                startDate = now.with(java.time.DayOfWeek.MONDAY);
+                break;
+            case "biweekly":
+                // Biweekly: start from 1st or 15th of month
+                int dayOfMonth = now.getDayOfMonth();
+                if (dayOfMonth >= 15) {
+                    startDate = now.withDayOfMonth(15);
+                } else {
+                    startDate = now.withDayOfMonth(1);
+                }
+                break;
+            case "yearly":
+                startDate = now.withDayOfYear(1);
+                break;
+            case "monthly":
+            default:
+                startDate = now.withDayOfMonth(1);
+                break;
+        }
+        
+        // If we already have transactions, filter them
+        if (transactionsResult != null && transactionsResult.containsKey("data")) {
+            List<Map<String, Object>> transactions = (List<Map<String, Object>>) transactionsResult.get("data");
+            if (transactions == null) {
+                // Try getting from success response format
+                transactions = (List<Map<String, Object>>) transactionsResult.get("success");
+            }
+            if (transactions != null) {
+                double total = 0;
+                for (Map<String, Object> tx : transactions) {
+                    String txType = (String) tx.get("type");
+                    String txCategory = (String) tx.get("category");
+                    
+                    // Only count expenses in matching category
+                    if ("Expense".equalsIgnoreCase(txType) && 
+                        (category.equalsIgnoreCase(txCategory) || "General".equalsIgnoreCase(category))) {
+                        
+                        // Check if transaction is within period
+                        String createdAt = extractDateFromTransaction(tx);
+                        if (createdAt != null) {
+                            try {
+                                java.time.LocalDate txDate = java.time.LocalDate.parse(createdAt.substring(0, 10));
+                                if (!txDate.isBefore(startDate)) {
+                                    Object amountObj = tx.get("amount");
+                                    if (amountObj instanceof Number) {
+                                        total += ((Number) amountObj).doubleValue();
+                                    }
+                                }
+                            } catch (Exception e) {
+                                // Skip transactions with invalid dates
+                            }
+                        }
+                    }
+                }
+                return total;
+            }
+        }
+        
+        // Fallback: fetch transactions for the specific range
+        if (!useMock) {
+            String startDateStr = startDate.toString();
+            String endDateStr = now.toString();
+            Map<String, Object> rangeResult = coreApi.getTransactionsByRange(userId, startDateStr, endDateStr, "Expense");
+            
+            if (!rangeResult.containsKey("error") && rangeResult.containsKey("data")) {
+                List<Map<String, Object>> transactions = (List<Map<String, Object>>) rangeResult.get("data");
+                double total = 0;
+                for (Map<String, Object> tx : transactions) {
+                    String txCategory = (String) tx.get("category");
+                    if (category.equalsIgnoreCase(txCategory) || "General".equalsIgnoreCase(category)) {
+                        Object amountObj = tx.get("amount");
+                        if (amountObj instanceof Number) {
+                            total += ((Number) amountObj).doubleValue();
+                        }
+                    }
+                }
+                return total;
+            }
+        }
+        
+        return 0;
     }
 
     /**
@@ -625,6 +824,7 @@ public class MessageProcessorService {
         return sb.toString();
     }
 
+    @SuppressWarnings("unchecked")
     private String handleCreateRule(String userId, IntentResult intent) {
         // Handle category - default to "General" if not specified
         String category = intent.getCategory();
@@ -643,6 +843,44 @@ public class MessageProcessorService {
         
         String period = intent.getPeriod() != null ? intent.getPeriod() : "Monthly";
         
+        // Check for existing rule with same category and period
+        boolean isUpdate = false;
+        String existingRuleId = null;
+        Double oldAmount = null;
+        
+        if (!useMock) {
+            Map<String, Object> rulesResult = coreApi.getRules(userId);
+            if (!rulesResult.containsKey("error") && rulesResult.containsKey("data")) {
+                List<Map<String, Object>> rules = (List<Map<String, Object>>) rulesResult.get("data");
+                for (Map<String, Object> rule : rules) {
+                    String ruleCategory = (String) rule.get("category");
+                    String rulePeriod = (String) rule.get("period");
+                    
+                    // Check if same category and period (case insensitive)
+                    if (ruleCategory != null && rulePeriod != null &&
+                        ruleCategory.equalsIgnoreCase(category) && 
+                        rulePeriod.equalsIgnoreCase(period)) {
+                        existingRuleId = (String) rule.get("id");
+                        oldAmount = rule.get("amountLimit") != null ? 
+                            ((Number) rule.get("amountLimit")).doubleValue() : null;
+                        isUpdate = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Delete existing rule if found (to update)
+            if (existingRuleId != null) {
+                Map<String, Object> deleteResult = coreApi.deleteRule(existingRuleId);
+                if (deleteResult.containsKey("error")) {
+                    System.err.println("⚠️ Could not delete existing rule: " + deleteResult.get("error"));
+                } else {
+                    System.out.println("🔄 Deleted existing rule " + existingRuleId + " for update");
+                }
+            }
+        }
+        
+        // Create the new rule
         Map<String, Object> result = useMock
             ? mockCoreApi.createRule(userId, "MonthlyBudget", category, amount, period)
             : coreApi.createRule(userId, "MonthlyBudget", category, amount, period);
@@ -654,6 +892,17 @@ public class MessageProcessorService {
         String periodText = translatePeriod(period);
         String modeIndicator = useMock ? "\n\n🧪 _[Modo prueba]_" : "";
         String categoryText = "General".equals(category) ? "Todos los gastos" : category;
+        
+        // Different message for update vs create
+        if (isUpdate && oldAmount != null) {
+            return String.format("📏 ¡Regla actualizada!\n\n• 📂 Categoría: %s\n• 💰 Límite anterior: $%,.0f\n• 💰 Nuevo límite: $%,.0f\n• 📅 Período: %s\n\n💡 Te avisaré cuando te acerques al límite.%s",
+                categoryText,
+                oldAmount,
+                amount,
+                periodText,
+                modeIndicator
+            );
+        }
         
         return String.format("📏 ¡Regla creada!\n\n• 📂 Categoría: %s\n• 💰 Límite: $%,.0f\n• 📅 Período: %s\n\n💡 Te avisaré cuando te acerques al límite.%s",
             categoryText,
@@ -709,6 +958,7 @@ public class MessageProcessorService {
         switch (period.toLowerCase()) {
             case "monthly": return "Mensual";
             case "weekly": return "Semanal";
+            case "biweekly": return "Quincenal";
             case "daily": return "Diario";
             case "yearly": return "Anual";
             default: return period;

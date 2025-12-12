@@ -18,6 +18,7 @@ import java.util.Map;
 /**
  * Service for communicating with the Core MS (.NET service).
  * Handles all HTTP requests to the financial management API.
+ * Uses API Key authentication for internal service communication.
  */
 @Service
 public class CoreApiService {
@@ -25,11 +26,25 @@ public class CoreApiService {
     private final RestTemplate restTemplate;
     private final String baseUrl;
     private final ObjectMapper objectMapper;
+    private final String apiKey;
 
-    public CoreApiService(@Value("${ms.core.base-url}") String baseUrl) {
+    public CoreApiService(
+            @Value("${ms.core.base-url}") String baseUrl,
+            @Value("${ms.core.api-key:riwi-internal-service-key-2024-secure}") String apiKey) {
         this.restTemplate = new RestTemplate();
         this.baseUrl = baseUrl;
         this.objectMapper = new ObjectMapper();
+        this.apiKey = apiKey;
+    }
+
+    /**
+     * Create HTTP headers with API Key for internal service authentication
+     */
+    private HttpHeaders createHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Api-Key", apiKey);
+        return headers;
     }
 
     // ==================== USER ENDPOINTS ====================
@@ -259,9 +274,7 @@ public class CoreApiService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> postRequest(String url, Map<String, Object> body) {
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
+            HttpHeaders headers = createHeaders();
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             
             System.out.println("📤 POST " + url);
@@ -294,7 +307,10 @@ public class CoreApiService {
         try {
             System.out.println("📤 GET " + url);
             
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
+            HttpHeaders headers = createHeaders();
+            HttpEntity<?> request = new HttpEntity<>(headers);
+            
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, request, String.class);
             
             System.out.println("📥 Response: " + response.getStatusCode());
             
@@ -328,7 +344,10 @@ public class CoreApiService {
         try {
             System.out.println("📤 DELETE " + url);
             
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, null, String.class);
+            HttpHeaders headers = createHeaders();
+            HttpEntity<?> request = new HttpEntity<>(headers);
+            
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, request, String.class);
             
             System.out.println("📥 Response: " + response.getStatusCode());
             
@@ -354,9 +373,7 @@ public class CoreApiService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> patchRequest(String url, Map<String, Object> body) {
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
+            HttpHeaders headers = createHeaders();
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             
             System.out.println("📤 PATCH " + url);

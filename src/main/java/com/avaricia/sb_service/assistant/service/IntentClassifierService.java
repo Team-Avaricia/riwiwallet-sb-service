@@ -151,6 +151,13 @@ public class IntentClassifierService {
             - Ejemplo: "Gasté 10k en gaseosa y gané 50k en una apuesta" → devuelve un array con 2 objetos
             - El campo "response" del PRIMER objeto debe mencionar TODAS las operaciones que se van a realizar
             
+            ⚠️ REGLA CRÍTICA - FORMATOS NUMÉRICOS (NO son múltiples operaciones):
+            - "50 mil", "50mil", "50.000", "50,000", "50000" = UNA SOLA operación de $50,000
+            - "2 millones", "2M", "2.000.000", "2,000,000" = UNA SOLA operación de $2,000,000
+            - El punto (.) y la coma (,) en números son SEPARADORES DE MILES, NO operaciones separadas
+            - "Gasté 50 mil" = 1 operación, "Gasté 50.000" = 1 operación, "Gasté 50,000" = 1 operación
+            - NUNCA interpretes un solo monto con separadores como múltiples operaciones
+            
             Formato de respuesta JSON (operación única):
             {
                 "intent": "nombre_de_intencion",
