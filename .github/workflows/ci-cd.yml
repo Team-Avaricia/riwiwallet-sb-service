@@ -76,9 +76,11 @@ jobs:
               -e API_NET_URL=http://netapi_gestor_finanzas:8080 \
               -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
               -e "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
+              -e "JWT_SECRET=${{ secrets.JWT_SECRET }}" \
+              -e "JWT_EXPIRATION=86400000" \
               -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/riwiwallet_db \
-              -e SPRING_DATASOURCE_USERNAME=riwi_user \
-              -e SPRING_DATASOURCE_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC \
+              -e DB_USERNAME=riwi_user \
+              -e DB_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC \
               --memory="512m" \
               --cpus="0.75" \
               ${{ env.DOCKER_IMAGE }}:latest
