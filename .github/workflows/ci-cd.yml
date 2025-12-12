@@ -1,0 +1,105 @@
+name: CI/CD - Chatbot Spring Boot
+
+on:
+  push:
+    branches:
+      - main
+      - development
+
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/riwiwallet-chatbot
+  CONTAINER_NAME: riwiwallet_chatbot
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. Checkout del código
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Setup Java (necesario para tests si los habilitas)
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # 3. Login en Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 4. Construir y subir imagen Docker
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_TAG="${{ github.sha }}"
+          
+          echo "🔨 Construyendo imagen..."
+          docker build -t ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG .
+          docker build -t ${{ env.DOCKER_IMAGE }}:latest .
+          
+          echo "📤 Subiendo a Docker Hub..."
+          docker push ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG
+          docker push ${{ env.DOCKER_IMAGE }}:latest
+          
+          echo "✅ Imagen subida: ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG"
+
+      # 5. Desplegar en VPS
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "🚀 Iniciando despliegue del Chatbot..."
+            
+            # Detener y eliminar contenedor anterior
+            docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            
+            # Descargar imagen nueva
+            docker pull ${{ env.DOCKER_IMAGE }}:latest
+            
+            # Levantar nuevo contenedor
+            docker run -d \
+              --name ${{ env.CONTAINER_NAME }} \
+              --restart always \
+              --network riwi_network \
+              -p 5002:8080 \
+              -e SPRING_PROFILES_ACTIVE=production \
+              -e API_NET_URL=http://netapi_gestor_finanzas:8080 \
+              -e TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
+              -e OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
+              -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/riwiwallet_db \
+              -e SPRING_DATASOURCE_USERNAME=riwi_user \
+              -e SPRING_DATASOURCE_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC \
+              --memory="512m" \
+              --cpus="0.75" \
+              ${{ env.DOCKER_IMAGE }}:latest
+            
+            echo "✅ Chatbot desplegado exitosamente"
+            
+            # Esperar a que inicie
+            echo "⏳ Esperando que el contenedor inicie..."
+            sleep 15
+            
+            # Verificar estado
+            if docker ps | grep -q ${{ env.CONTAINER_NAME }}; then
+              echo "✅ Contenedor corriendo"
+              docker logs ${{ env.CONTAINER_NAME }} --tail 30
+            else
+              echo "❌ ERROR: Contenedor no está corriendo"
+              docker logs ${{ env.CONTAINER_NAME }} --tail 50
+              exit 1
+            fi
+            
+            # Limpiar imágenes antiguas
+            docker image prune -af --filter "until=24h"
+            
+            echo "🎉 Despliegue completado"
