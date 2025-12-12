@@ -84,6 +84,8 @@ jobs:
               -e "MS_CORE_API_KEY=riwi-internal-service-key-2024-secure" \
               -e "TELEGRAM_BOT_USERNAME=RiwiWalletBot" \
               -e "APP_FRONTEND_URL=https://tu-frontend.com" \
+              -e "WHATSAPP_PHONE_NUMBER_ID=dummy-not-configured" \
+              -e "WHATSAPP_ACCESS_TOKEN=dummy-not-configured" \
               -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" \
               -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}" \
               -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" \
