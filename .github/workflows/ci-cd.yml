@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - develop
+      - development
 
 env:
   DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/riwiwallet-chatbot
@@ -53,9 +53,9 @@ jobs:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             echo "🚀 Iniciando despliegue del Chatbot..."
             
@@ -66,30 +66,48 @@ jobs:
             # Descargar imagen nueva
             docker pull ${{ env.DOCKER_IMAGE }}:latest
             
-            # Levantar nuevo contenedor
+            # Levantar nuevo contenedor (con todas las variables)
             docker run -d \
               --name ${{ env.CONTAINER_NAME }} \
               --restart always \
               --network riwi_network \
               -p 5002:8080 \
               -e SPRING_PROFILES_ACTIVE=production \
-              -e "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-              -e "SPRING_AI_OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
-              -e "JWT_SECRET=${{ secrets.JWT_SECRET }}" \
-              -e "JWT_EXPIRATION=86400000" \
-              -e "SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/riwiwallet_db" \
-              -e "SPRING_DATASOURCE_USERNAME=riwi_user" \
-              -e "SPRING_DATASOURCE_PASSWORD=J9YoXTAy77bVPxwMtArRHfXDC" \
-              -e "MS_CORE_BASE_URL=http://netapi_gestor_finanzas:8080" \
-              -e "MS_CORE_API_KEY=riwi-internal-service-key-2024-secure" \
-              -e "TELEGRAM_BOT_USERNAME=RiwiWalletBot" \
-              -e "APP_FRONTEND_URL=https://tu-frontend.com" \
-              -e "WHATSAPP_PHONE_NUMBER_ID=dummy-not-configured" \
-              -e "WHATSAPP_ACCESS_TOKEN=dummy-not-configured" \
-              -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" \
-              -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}" \
-              -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" \
-              -e "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_MICROSOFT_CLIENT_SECRET=${{ secrets.MICROSOFT_CLIENT_SECRET }}" \
+              -e "spring.application.name=riwi-wallet-chatbot" \
+              -e "spring.ai.openai.api-key=${{ secrets.OPENAI_API_KEY }}" \
+              -e "spring.ai.openai.chat.options.model=${{ secrets.OPENAI_MODEL }}" \
+              -e "telegram.bot.token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+              -e "whatsapp.access.token=${{ secrets.WHATSAPP_ACCESS_TOKEN }}" \
+              -e "whatsapp.phone.number.id=${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}" \
+              -e "whatsapp.verify.token=${{ secrets.WHATSAPP_VERIFY_TOKEN }}" \
+              -e "ms.core.base-url=http://netapi_gestor_finanzas:8080" \
+              -e "ms.core.use-mock=false" \
+              -e "ms.core.api-key=${{ secrets.MS_CORE_API_KEY }}" \
+              -e "app.frontend.url=${{ secrets.APP_FRONTEND_URL }}" \
+              -e "spring.datasource.url=jdbc:postgresql://db:5432/riwiwallet_db" \
+              -e "spring.datasource.driverClassName=org.postgresql.Driver" \
+              -e "spring.datasource.username=riwi_user" \
+              -e "spring.datasource.password=J9YoXTAy77bVPxwMtArRHfXDC" \
+              -e "spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect" \
+              -e "spring.jpa.hibernate.ddl-auto=update" \
+              -e "spring.jpa.show-sql=false" \
+              -e "jwt.secret=${{ secrets.JWT_SECRET }}" \
+              -e "jwt.expiration=${{ secrets.JWT_EXPIRATION }}" \
+              -e "spring.security.oauth2.client.registration.google.client-id=${{ secrets.GOOGLE_CLIENT_ID }}" \
+              -e "spring.security.oauth2.client.registration.google.client-secret=${{ secrets.GOOGLE_CLIENT_SECRET }}" \
+              -e "spring.security.oauth2.client.registration.google.scope=profile,email" \
+              -e "spring.security.oauth2.client.registration.google.redirect-uri={baseUrl}/login/oauth2/code/google" \
+              -e "spring.security.oauth2.client.registration.microsoft.client-id=${{ secrets.MICROSOFT_CLIENT_ID }}" \
+              -e "spring.security.oauth2.client.registration.microsoft.client-secret=${{ secrets.MICROSOFT_CLIENT_SECRET }}" \
+              -e "spring.security.oauth2.client.registration.microsoft.scope=openid,profile,email" \
+              -e "spring.security.oauth2.client.registration.microsoft.authorization-grant-type=authorization_code" \
+              -e "spring.security.oauth2.client.registration.microsoft.redirect-uri={baseUrl}/login/oauth2/code/microsoft" \
+              -e "spring.security.oauth2.client.registration.microsoft.client-name=Microsoft" \
+              -e "spring.security.oauth2.client.provider.microsoft.authorization-uri=https://login.microsoftonline.com/common/oauth2/v2.0/authorize" \
+              -e "spring.security.oauth2.client.provider.microsoft.token-uri=https://login.microsoftonline.com/common/oauth2/v2.0/token" \
+              -e "spring.security.oauth2.client.provider.microsoft.user-info-uri=https://graph.microsoft.com/v1.0/me" \
+              -e "spring.security.oauth2.client.provider.microsoft.jwk-set-uri=https://login.microsoftonline.com/common/discovery/v2.0/keys" \
+              -e "spring.security.oauth2.client.provider.microsoft.user-name-attribute=id" \
               --memory="512m" \
               --cpus="0.75" \
               ${{ env.DOCKER_IMAGE }}:latest
