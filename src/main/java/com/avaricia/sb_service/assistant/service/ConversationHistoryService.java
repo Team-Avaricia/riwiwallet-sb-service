@@ -34,7 +34,15 @@ public class ConversationHistoryService {
             return new ArrayList<>();
         }
         
-        return conversationHistory.getOrDefault(telegramId, new ArrayList<>());
+        List<ConversationMessage> history = conversationHistory.get(telegramId);
+        if (history == null) {
+            return new ArrayList<>();
+        }
+        
+        // Return defensive copy to avoid ConcurrentModificationException
+        synchronized (history) {
+            return new ArrayList<>(history);
+        }
     }
 
     public List<Map<String, String>> getHistoryForOpenAI(Long telegramId) {
@@ -81,12 +89,19 @@ public class ConversationHistoryService {
             clearHistory(telegramId);
         }
         
-        List<ConversationMessage> history = conversationHistory.computeIfAbsent(telegramId, k -> new ArrayList<>());
+        // Use Collections.synchronizedList for thread-safety
+        List<ConversationMessage> history = conversationHistory.computeIfAbsent(
+            telegramId, 
+            k -> Collections.synchronizedList(new ArrayList<>())
+        );
         
-        history.add(new ConversationMessage(role, content, LocalDateTime.now()));
-        
-        while (history.size() > MAX_MESSAGES) {
-            history.remove(0);
+        // Synchronize list modification operations
+        synchronized (history) {
+            history.add(new ConversationMessage(role, content, LocalDateTime.now()));
+            
+            while (history.size() > MAX_MESSAGES) {
+                history.remove(0);
+            }
         }
         
         lastActivity.put(telegramId, LocalDateTime.now());
