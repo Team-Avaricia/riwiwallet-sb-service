@@ -300,6 +300,7 @@ public class MessageProcessorService {
         StringBuilder combinedResponse = new StringBuilder();
         
         // Count valid operations (those with amount > 0)
+        // Count valid operations (those with amount > 0)
         int validOperationCount = 0;
         for (IntentResult intent : intents) {
             Double amount = intent.getAmount();
