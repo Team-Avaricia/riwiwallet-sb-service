@@ -1,5 +1,7 @@
 package com.avaricia.sb_service.assistant.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -17,19 +19,24 @@ import java.util.Map;
 @Service
 public class TransactionHandlerService {
 
+    private static final Logger log = LoggerFactory.getLogger(TransactionHandlerService.class);
+
     private final CoreApiService coreApi;
     private final MockCoreApiService mockCoreApi;
     private final ResponseFormatterService formatter;
+    private final ConfirmationService confirmationService;
     private final boolean useMock;
 
     public TransactionHandlerService(
             CoreApiService coreApi,
             MockCoreApiService mockCoreApi,
             ResponseFormatterService formatter,
+            ConfirmationService confirmationService,
             @Value("${ms.core.use-mock:false}") boolean useMock) {
         this.coreApi = coreApi;
         this.mockCoreApi = mockCoreApi;
         this.formatter = formatter;
+        this.confirmationService = confirmationService;
         this.useMock = useMock;
     }
 
@@ -37,8 +44,16 @@ public class TransactionHandlerService {
      * Handles transaction creation (expense or income).
      * Includes default values for category and description when not provided.
      * Validates that amount is valid before calling the API.
+     * 
+     * For amounts > $1,000,000, requires confirmation before proceeding.
+     * 
+     * @param userId The system user ID
+     * @param intent The intent with transaction details
+     * @param type "Expense" or "Income"
+     * @param telegramId The Telegram user ID (for confirmation tracking)
+     * @return Response message or confirmation request
      */
-    public String handleCreateTransaction(String userId, IntentResult intent, String type) {
+    public String handleCreateTransaction(String userId, IntentResult intent, String type, Long telegramId) {
         // Validate that amount exists and is greater than 0
         Double amount = intent.getAmount();
         if (amount == null) {
@@ -53,7 +68,7 @@ public class TransactionHandlerService {
         
         // Warning for extremely high amounts (>100 billion - likely typo)
         if (amount > 100_000_000_000.0) {
-            System.out.println("⚠️ WARNING: Extremely high amount detected: " + amount);
+            log.warn("⚠️ Extremely high amount detected: {} for user {}", amount, userId);
         }
         
         // Set default category if not provided
@@ -61,18 +76,51 @@ public class TransactionHandlerService {
         if (category == null || category.isEmpty()) {
             category = "Otros";
         }
+        intent.setCategory(category);
         
         // Set default description if not provided
         String description = intent.getDescription();
         if (description == null || description.isEmpty()) {
             description = "Expense".equals(type) ? "Gasto registrado" : "Ingreso registrado";
         }
+        intent.setDescription(description);
         
+        // Check if amount requires confirmation (> 1,000,000)
+        if (confirmationService.requiresConfirmation(amount)) {
+            log.info("⚠️ High-value transaction detected: ${} - requesting confirmation", String.format("%,.0f", amount));
+            String actionType = "Expense".equals(type) ? "create_expense" : "create_income";
+            return confirmationService.createPendingAction(actionType, intent, userId, telegramId);
+        }
+        
+        // Execute transaction directly (amount <= 1,000,000)
+        return executeTransaction(userId, intent, type);
+    }
+
+    /**
+     * Handles transaction creation without confirmation (for backwards compatibility).
+     * Delegates to the main method with null telegramId (no confirmation support).
+     */
+    public String handleCreateTransaction(String userId, IntentResult intent, String type) {
+        return handleCreateTransaction(userId, intent, type, null);
+    }
+
+    /**
+     * Executes a transaction after confirmation or for amounts that don't require confirmation.
+     * This is the actual transaction creation logic.
+     */
+    public String executeTransaction(String userId, IntentResult intent, String type) {
+        Double amount = intent.getAmount();
+        String category = intent.getCategory();
+        String description = intent.getDescription();
+
+        log.debug("💾 Executing transaction: {} ${} for user {}", type, String.format("%,.0f", amount), userId);
+
         Map<String, Object> result = useMock
             ? mockCoreApi.createTransaction(userId, amount, type, category, description)
             : coreApi.createTransaction(userId, amount, type, category, description);
         
         if (result.containsKey("error")) {
+            log.error("❌ Transaction failed for user {}: {}", userId, result.get("error"));
             return "❌ No pude registrar la transacción. " + result.get("error");
         }
         
@@ -80,19 +128,28 @@ public class TransactionHandlerService {
         String typeText = "Expense".equals(type) ? "Gasto" : "Ingreso";
         String modeIndicator = formatter.getMockIndicator(useMock);
         
+        // Add extra info for high-value transactions
+        String highValueNote = "";
+        if (amount > ConfirmationService.CONFIRMATION_THRESHOLD) {
+            highValueNote = "\n\n✅ _Transacción de alto valor confirmada_";
+        }
+        
         // Show balance in mock mode
         String balanceInfo = "";
         if (useMock) {
             Double balance = mockCoreApi.getBalance(userId);
             balanceInfo = String.format("\n\n💳 Saldo actual: $%,.0f", balance);
         }
+
+        log.info("✅ Transaction created: {} ${} in {} for user {}", type, String.format("%,.0f", amount), category, userId);
         
-        return String.format("%s %s registrado!\n• Monto: $%,.0f\n• Categoría: %s\n• Descripción: %s%s%s",
+        return String.format("%s %s registrado!\n• Monto: $%,.0f\n• Categoría: %s\n• Descripción: %s%s%s%s",
             emoji,
             typeText,
             amount,
             category,
             description,
+            highValueNote,
             balanceInfo,
             modeIndicator
         );

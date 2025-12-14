@@ -1,5 +1,7 @@
 package com.avaricia.sb_service.assistant.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -22,6 +24,8 @@ import java.util.Map;
  */
 @Service
 public class CoreApiService {
+
+    private static final Logger log = LoggerFactory.getLogger(CoreApiService.class);
 
     private final RestTemplate restTemplate;
     private final String baseUrl;
@@ -277,12 +281,11 @@ public class CoreApiService {
             HttpHeaders headers = createHeaders();
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             
-            System.out.println("📤 POST " + url);
-            System.out.println("   Body: " + body);
+            log.debug("📤 POST {} | Body: {}", url, body);
             
             ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
             
-            System.out.println("📥 Response: " + response.getStatusCode());
+            log.debug("📥 POST {} | Status: {}", url, response.getStatusCode());
             
             if (response.getBody() != null && !response.getBody().isEmpty()) {
                 return objectMapper.readValue(response.getBody(), Map.class);
@@ -294,7 +297,7 @@ public class CoreApiService {
             return result;
             
         } catch (Exception e) {
-            System.err.println("❌ Error in POST " + url + ": " + e.getMessage());
+            log.error("❌ POST {} failed: {}", url, e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("error", e.getMessage());
@@ -305,14 +308,14 @@ public class CoreApiService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> getRequest(String url) {
         try {
-            System.out.println("📤 GET " + url);
+            log.debug("📤 GET {}", url);
             
             HttpHeaders headers = createHeaders();
             HttpEntity<?> request = new HttpEntity<>(headers);
             
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, request, String.class);
             
-            System.out.println("📥 Response: " + response.getStatusCode());
+            log.debug("📥 GET {} | Status: {}", url, response.getStatusCode());
             
             if (response.getBody() != null && !response.getBody().isEmpty()) {
                 JsonNode node = objectMapper.readTree(response.getBody());
@@ -331,7 +334,7 @@ public class CoreApiService {
             return result;
             
         } catch (Exception e) {
-            System.err.println("❌ Error in GET " + url + ": " + e.getMessage());
+            log.error("❌ GET {} failed: {}", url, e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("error", e.getMessage());
@@ -342,14 +345,14 @@ public class CoreApiService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> deleteRequest(String url) {
         try {
-            System.out.println("📤 DELETE " + url);
+            log.debug("📤 DELETE {}", url);
             
             HttpHeaders headers = createHeaders();
             HttpEntity<?> request = new HttpEntity<>(headers);
             
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, request, String.class);
             
-            System.out.println("📥 Response: " + response.getStatusCode());
+            log.debug("📥 DELETE {} | Status: {}", url, response.getStatusCode());
             
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
@@ -362,7 +365,7 @@ public class CoreApiService {
             return result;
             
         } catch (Exception e) {
-            System.err.println("❌ Error in DELETE " + url + ": " + e.getMessage());
+            log.error("❌ DELETE {} failed: {}", url, e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("error", e.getMessage());
@@ -376,11 +379,11 @@ public class CoreApiService {
             HttpHeaders headers = createHeaders();
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             
-            System.out.println("📤 PATCH " + url);
+            log.debug("📤 PATCH {} | Body: {}", url, body);
             
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PATCH, request, String.class);
             
-            System.out.println("📥 Response: " + response.getStatusCode());
+            log.debug("📥 PATCH {} | Status: {}", url, response.getStatusCode());
             
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
@@ -393,7 +396,7 @@ public class CoreApiService {
             return result;
             
         } catch (Exception e) {
-            System.err.println("❌ Error in PATCH " + url + ": " + e.getMessage());
+            log.error("❌ PATCH {} failed: {}", url, e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("error", e.getMessage());
@@ -420,7 +423,7 @@ public class CoreApiService {
                 return dateStr + "T23:59:59Z";
             }
         } catch (Exception e) {
-            System.err.println("⚠️ Error converting date to UTC: " + e.getMessage());
+            log.warn("⚠️ Error converting date to UTC: {}", e.getMessage());
             return dateStr;
         }
     }

@@ -1,12 +1,17 @@
 package com.avaricia.sb_service.assistant.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.avaricia.sb_service.assistant.dto.IntentResult;
+import com.avaricia.sb_service.assistant.dto.PendingAction;
+import com.avaricia.sb_service.assistant.dto.PendingBatchAction;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Service that processes user messages and coordinates actions.
@@ -17,9 +22,12 @@ import java.util.Map;
  * - RuleHandlerService: Handles financial rules (limits/budgets)
  * - QueryHandlerService: Handles balance and summary queries
  * - ResponseFormatterService: Handles response formatting utilities
+ * - ConfirmationService: Handles confirmation for high-value transactions
  */
 @Service
 public class MessageProcessorService {
+
+    private static final Logger log = LoggerFactory.getLogger(MessageProcessorService.class);
 
     private final IntentClassifierService intentClassifier;
     private final UserMappingService userMapping;
@@ -30,6 +38,7 @@ public class MessageProcessorService {
     private final RuleHandlerService ruleHandler;
     private final QueryHandlerService queryHandler;
     private final ResponseFormatterService formatter;
+    private final ConfirmationService confirmationService;
     
     // API services (needed for validate_expense which is complex)
     private final CoreApiService coreApi;
@@ -44,6 +53,7 @@ public class MessageProcessorService {
             RuleHandlerService ruleHandler,
             QueryHandlerService queryHandler,
             ResponseFormatterService formatter,
+            ConfirmationService confirmationService,
             CoreApiService coreApi,
             MockCoreApiService mockCoreApi,
             @Value("${ms.core.use-mock:false}") boolean useMock) {
@@ -54,18 +64,21 @@ public class MessageProcessorService {
         this.ruleHandler = ruleHandler;
         this.queryHandler = queryHandler;
         this.formatter = formatter;
+        this.confirmationService = confirmationService;
         this.coreApi = coreApi;
         this.mockCoreApi = mockCoreApi;
         this.useMock = useMock;
         
         if (useMock) {
-            System.out.println("⚠️ MOCK MODE ENABLED - Using MockCoreApiService instead of real API");
+            log.info("⚠️ MOCK MODE ENABLED - Using MockCoreApiService instead of real API");
         }
     }
 
     /**
      * Processes a user message and returns the response.
      * Supports multiple operations in a single message.
+     * 
+     * First checks if there's a pending confirmation for high-value transactions.
      * 
      * @param telegramId The Telegram user ID
      * @param message The message sent by the user
@@ -74,35 +87,146 @@ public class MessageProcessorService {
     public String processMessage(Long telegramId, String message) {
         // 1. Get or create the userId for this Telegram user
         String userId = userMapping.getUserId(telegramId);
-        System.out.println("📨 Processing message from Telegram ID: " + telegramId + " (User ID: " + userId + ")");
+        log.info("📨 Processing message from Telegram ID: {} (User ID: {})", telegramId, userId);
         
-        // 2. Classify the message intent(s) WITH conversation context
+        // 2. Check if user has a pending confirmation
+        String confirmationResponse = handlePendingConfirmation(telegramId, message);
+        if (confirmationResponse != null) {
+            conversationHistory.addUserMessage(telegramId, message);
+            conversationHistory.addAssistantMessage(telegramId, confirmationResponse);
+            return confirmationResponse;
+        }
+        
+        // 3. Classify the message intent(s) WITH conversation context
         List<IntentResult> intents = intentClassifier.classifyIntent(message, telegramId);
-        System.out.println("🎯 Detected " + intents.size() + " intent(s): " + intents);
+        log.debug("🎯 Detected {} intent(s): {}", intents.size(), intents);
         
-        // 3. Save user message to history
+        // 4. Save user message to history
         conversationHistory.addUserMessage(telegramId, message);
         
-        // 4. Execute the corresponding action(s)
+        // 5. Execute the corresponding action(s)
         String response;
         String mainIntent = intents.get(0).getIntent();
         if (intents.size() == 1) {
-            // Single operation
-            response = executeIntent(userId, intents.get(0));
+            // Single operation - pass telegramId for confirmation support
+            response = executeIntent(userId, intents.get(0), telegramId);
         } else {
             // Multiple operations - execute each and combine responses
-            response = executeMultipleIntents(userId, intents);
+            response = executeMultipleIntents(userId, intents, telegramId);
         }
         
-        // 5. Humanize the response using AI (for data-rich responses)
+        // 6. Humanize the response using AI (for data-rich responses)
         response = humanizeIfNeeded(response, message, mainIntent);
         
-        // 6. Save assistant response to history
+        // 7. Save assistant response to history
         conversationHistory.addAssistantMessage(telegramId, response);
         
-        System.out.println("💬 Conversation history size: " + conversationHistory.getHistorySize(telegramId) + " messages");
+        log.debug("💬 Conversation history size: {} messages", conversationHistory.getHistorySize(telegramId));
         
         return response;
+    }
+
+    /**
+     * Handles pending confirmation for high-value transactions (single or batch).
+     * 
+     * @param telegramId The Telegram user ID
+     * @param message The user's message
+     * @return Response if confirmation was handled, null if no pending confirmation
+     */
+    private String handlePendingConfirmation(Long telegramId, String message) {
+        // Check if user has any pending action (single or batch)
+        if (!confirmationService.hasAnyPendingAction(telegramId)) {
+            return null;
+        }
+        
+        log.debug("⏳ User {} has pending confirmation, checking response: '{}'", telegramId, message);
+        
+        // Check if message is a confirmation
+        if (confirmationService.isConfirmationMessage(message)) {
+            // Try single action first
+            Optional<PendingAction> singleActionOpt = confirmationService.confirmAction(telegramId);
+            if (singleActionOpt.isPresent()) {
+                PendingAction action = singleActionOpt.get();
+                String type = "create_expense".equals(action.getActionType()) ? "Expense" : "Income";
+                log.info("✅ User {} confirmed high-value transaction: {} of ${}",
+                    telegramId, type, String.format("%,.0f", action.getIntent().getAmount()));
+                return transactionHandler.executeTransaction(action.getUserId(), action.getIntent(), type);
+            }
+            
+            // Try batch action
+            Optional<PendingBatchAction> batchActionOpt = confirmationService.confirmBatchAction(telegramId);
+            if (batchActionOpt.isPresent()) {
+                PendingBatchAction batchAction = batchActionOpt.get();
+                log.info("✅ User {} confirmed batch of {} high-value transactions",
+                    telegramId, batchAction.size());
+                return executeBatchAction(batchAction);
+            }
+            
+            return confirmationService.getExpiredMessage();
+        }
+        
+        // Check if message is a cancellation
+        if (confirmationService.isCancellationMessage(message)) {
+            confirmationService.cancelAction(telegramId);
+            log.info("❌ User {} cancelled pending transaction(s)", telegramId);
+            return confirmationService.getCancellationMessage();
+        }
+        
+        // Message is neither confirmation nor cancellation - clear pending and process normally
+        log.debug("🔄 User {} sent new message, clearing pending confirmation", telegramId);
+        confirmationService.cancelAction(telegramId);
+        return null;
+    }
+
+    /**
+     * Executes all transactions in a confirmed batch action.
+     * 
+     * @param batchAction The confirmed batch action
+     * @return Response message with results
+     */
+    private String executeBatchAction(PendingBatchAction batchAction) {
+        StringBuilder response = new StringBuilder();
+        response.append("✅ *¡Operaciones confirmadas!*\n\n");
+        
+        int successCount = 0;
+        int failCount = 0;
+        StringBuilder details = new StringBuilder();
+        
+        for (PendingBatchAction.BatchItem item : batchAction.getItems()) {
+            try {
+                String result = transactionHandler.executeTransaction(
+                    batchAction.getUserId(), item.getIntent(), item.getType());
+                
+                if (result.startsWith("❌")) {
+                    failCount++;
+                    details.append(String.format("❌ $%,.0f - %s - Error\n",
+                        item.getIntent().getAmount(),
+                        item.getIntent().getDescription() != null ? item.getIntent().getDescription() : item.getIntent().getCategory()));
+                } else {
+                    successCount++;
+                    String emoji = "Expense".equals(item.getType()) ? "💸" : "💰";
+                    details.append(String.format("%s $%,.0f - %s ✓\n",
+                        emoji,
+                        item.getIntent().getAmount(),
+                        item.getIntent().getDescription() != null ? item.getIntent().getDescription() : item.getIntent().getCategory()));
+                }
+            } catch (Exception e) {
+                failCount++;
+                log.error("❌ Error executing batch item: {}", e.getMessage());
+                details.append(String.format("❌ Error: %s\n", e.getMessage()));
+            }
+        }
+        
+        response.append(details);
+        response.append("\n");
+        
+        if (failCount == 0) {
+            response.append(String.format("📊 *Total:* %d operación(es) registrada(s)", successCount));
+        } else {
+            response.append(String.format("⚠️ *Resultado:* %d exitosa(s), %d fallida(s)", successCount, failCount));
+        }
+        
+        return response.toString();
     }
     
     /**
@@ -129,7 +253,7 @@ public class MessageProcessorService {
         // Don't humanize filtered queries to avoid mixing data
         if (isFilteredQuery && ("list_transactions_by_range".equals(intent) || 
                                 "list_transactions".equals(intent))) {
-            System.out.println("⏭️ Skipping humanization for filtered query: " + userQuery);
+            log.debug("⏭️ Skipping humanization for filtered query: {}", userQuery);
             return response;
         }
         
@@ -138,7 +262,7 @@ public class MessageProcessorService {
             try {
                 return intentClassifier.humanizeResponse(response, userQuery, intent);
             } catch (Exception e) {
-                System.err.println("⚠️ Humanization failed, using original response: " + e.getMessage());
+                log.warn("⚠️ Humanization failed, using original response: {}", e.getMessage());
                 return response;
             }
         }
@@ -148,11 +272,34 @@ public class MessageProcessorService {
     
     /**
      * Executes multiple intents and combines the responses.
-     * Builds a detailed response listing all operations.
+     * If any transaction exceeds the confirmation threshold, requests batch confirmation.
      */
-    private String executeMultipleIntents(String userId, List<IntentResult> intents) {
+    private String executeMultipleIntents(String userId, List<IntentResult> intents, Long telegramId) {
+        // Filter only transaction intents for batch confirmation check
+        List<IntentResult> transactionIntents = intents.stream()
+            .filter(intent -> "create_expense".equals(intent.getIntent()) || 
+                             "create_income".equals(intent.getIntent()))
+            .filter(intent -> intent.getAmount() != null && intent.getAmount() > 0)
+            .toList();
+        
+        // Check if any transaction requires confirmation
+        if (confirmationService.batchRequiresConfirmation(transactionIntents) && telegramId != null) {
+            log.info("⚠️ Batch contains high-value transactions - requesting confirmation");
+            return confirmationService.createPendingBatchAction(transactionIntents, userId, telegramId);
+        }
+        
+        // No high-value transactions - execute directly
+        return executeMultipleIntentsDirectly(userId, intents, telegramId);
+    }
+
+    /**
+     * Executes multiple intents directly without confirmation.
+     * Used when no high-value transactions are present or after confirmation.
+     */
+    private String executeMultipleIntentsDirectly(String userId, List<IntentResult> intents, Long telegramId) {
         StringBuilder combinedResponse = new StringBuilder();
         
+        // Count valid operations (those with amount > 0)
         // Count valid operations (those with amount > 0)
         int validOperationCount = 0;
         for (IntentResult intent : intents) {
@@ -192,10 +339,10 @@ public class MessageProcessorService {
         
         for (int i = 0; i < intents.size(); i++) {
             IntentResult intent = intents.get(i);
-            System.out.println("🔄 Executing operation " + (i + 1) + "/" + intents.size() + ": " + intent.getIntent());
+            log.debug("🔄 Executing operation {}/{}: {}", i + 1, intents.size(), intent.getIntent());
             
             try {
-                String result = executeIntentSilent(userId, intent);
+                String result = executeIntentSilent(userId, intent, telegramId);
                 if (result.startsWith("❌")) {
                     failCount++;
                     errors.append("❌ Op ").append(i + 1).append(": ").append(result).append("\n");
@@ -225,23 +372,28 @@ public class MessageProcessorService {
     
     /**
      * Executes an intent without adding the full response message (for batch processing).
+     * Uses silent transaction creation that skips confirmation for batch mode.
      */
-    private String executeIntentSilent(String userId, IntentResult intent) {
+    private String executeIntentSilent(String userId, IntentResult intent, Long telegramId) {
         switch (intent.getIntent()) {
             case "create_expense":
                 return transactionHandler.handleCreateTransactionSilent(userId, intent, "Expense");
             case "create_income":
                 return transactionHandler.handleCreateTransactionSilent(userId, intent, "Income");
             default:
-                return executeIntent(userId, intent);
+                return executeIntent(userId, intent, telegramId);
         }
     }
 
     /**
      * Executes the action based on the classified intent.
      * Delegates to specialized handler services.
+     * 
+     * @param userId The system user ID
+     * @param intent The classified intent
+     * @param telegramId The Telegram user ID (for confirmation support)
      */
-    private String executeIntent(String userId, IntentResult intent) {
+    private String executeIntent(String userId, IntentResult intent, Long telegramId) {
         try {
             String intentType = intent.getIntent();
             if (intentType == null) {
@@ -254,8 +406,9 @@ public class MessageProcessorService {
                 case "validate_expense" -> handleValidateExpense(userId, intent);
                 
                 // Transaction operations - delegated to TransactionHandlerService
-                case "create_expense" -> transactionHandler.handleCreateTransaction(userId, intent, "Expense");
-                case "create_income" -> transactionHandler.handleCreateTransaction(userId, intent, "Income");
+                // Pass telegramId for confirmation support on high-value transactions
+                case "create_expense" -> transactionHandler.handleCreateTransaction(userId, intent, "Expense", telegramId);
+                case "create_income" -> transactionHandler.handleCreateTransaction(userId, intent, "Income", telegramId);
                 case "list_transactions" -> transactionHandler.handleListTransactions(userId, intent);
                 case "list_transactions_by_date" -> transactionHandler.handleListTransactionsByDate(userId, intent);
                 case "list_transactions_by_range" -> transactionHandler.handleListTransactionsByRange(userId, intent);
@@ -265,7 +418,6 @@ public class MessageProcessorService {
                 // Query operations - delegated to QueryHandlerService
                 case "get_balance" -> queryHandler.handleGetBalance(userId);
                 case "get_summary" -> queryHandler.handleGetSummary(userId, intent);
-                
                 // Rule operations - delegated to RuleHandlerService
                 case "create_rule" -> ruleHandler.handleCreateRule(userId, intent);
                 case "list_rules" -> ruleHandler.handleListRules(userId);
