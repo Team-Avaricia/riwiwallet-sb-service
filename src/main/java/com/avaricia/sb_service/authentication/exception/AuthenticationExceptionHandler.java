@@ -16,7 +16,7 @@ import java.util.Map;
  * Scoped to only handle exceptions from authentication controllers.
  */
 @RestControllerAdvice(basePackages = "com.avaricia.sb_service.authentication")
-public class GlobalExceptionHandler {
+public class AuthenticationExceptionHandler {
 
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleRuntimeException(RuntimeException ex) {
