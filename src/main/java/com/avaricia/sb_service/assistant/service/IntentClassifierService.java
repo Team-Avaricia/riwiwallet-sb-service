@@ -72,10 +72,18 @@ public class IntentClassifierService {
             8. "get_balance" - Usuario pregunta por su saldo/dinero disponible
                 Ejemplos: "¿Cuánto dinero tengo?", "¿Cuál es mi saldo?", "¿Cuánto me queda?"
                 
-            9. "get_summary" - Usuario quiere un resumen GENERAL de gastos por categoría (sin período específico)
+            9. "get_summary" - Usuario quiere saber EN QUÉ gasta su dinero o un resumen de gastos
+                ⚠️ USAR ESTE INTENT CUANDO EL USUARIO PREGUNTA:
+                - "¿A dónde se va mi dinero?" (SIEMPRE es get_summary)
+                - "¿En qué gasto más?"
+                - "¿En qué se me va la plata?"
+                - "¿Dónde gasto más?"
+                - "¿Cuánto gasto en X categoría?"
+                - "Dame un resumen de gastos"
+                - "¿Cuál es el desglose de mis gastos?"
                 - SOLO usar cuando NO especifica un período concreto
                 - Si dice "resumen del mes pasado" o "resumen de noviembre" → usar list_transactions_by_range
-                Ejemplos: "¿En qué gasto más?", "Dame un resumen de mis gastos", "¿Cuánto gasto en comida?"
+                Ejemplos: "¿A dónde se va mi dinero?", "¿En qué gasto más?", "Dame un resumen", "¿Cuánto gasto en comida?"
                 
             10. "delete_transaction" - Usuario quiere eliminar una transacción
                 Ejemplos: "Elimina el último gasto", "Borra esa transacción"
@@ -86,14 +94,21 @@ public class IntentClassifierService {
             12. "list_rules" - Usuario quiere ver sus reglas
                 Ejemplos: "¿Cuáles son mis límites?", "Muéstrame mis reglas"
                 
-            13. "question" - Pregunta general, saludo, consejo financiero, o cualquier otra cosa
-                ⚠️ IMPORTANTE: Frases con "debería", "es bueno", "me conviene", "conviene" + verbo SIN monto específico = question
-                - "¿Debería invertir mi dinero?" = question (consejo general, no hay monto)
-                - "¿Es bueno tener tarjeta de crédito?" = question
-                - "¿Me conviene ahorrar?" = question
-                - "¿Cómo puedo ahorrar?" = question
+            13. "question" - SOLO para preguntas generales, saludos, o consejos SIN necesidad de datos
+                ⚠️ MUY IMPORTANTE: Si el usuario pregunta sobre sus gastos o finanzas, NO es question:
+                - "¿A dónde se va mi dinero?" → get_summary (NO question)
+                - "¿En qué gasto más?" → get_summary (NO question)
+                - "¿Cuánto tengo?" → get_balance (NO question)
+                
+                SOLO usar question para:
+                - Saludos: "Hola", "Buenos días"
+                - Consejos genéricos: "¿Cómo ahorro dinero?", "Dame consejos", "Tips de ahorro"
+                - Preguntas sin necesidad de datos: "¿Debería invertir?", "¿Es bueno tener tarjeta de crédito?"
+                
+                ⚠️ Frases con "debería" + verbo SIN monto específico = question
+                - "¿Debería invertir mi dinero?" = question
                 vs
-                - "¿Debería gastar 50k en ropa?" = validate_expense (hay monto específico)
+                - "¿Debería gastar 50k en ropa?" = validate_expense
                 Ejemplos: "Hola", "¿Cómo ahorro dinero?", "Dame consejos", "¿Debería invertir?", "Tips de ahorro"
             
             Categorías válidas: Comida, Transporte, Entretenimiento, Salud, Educación, Hogar, Ropa, Tecnología, Servicios, Arriendo, Vivienda, Salario, Freelance, Inversiones, Regalos, Otros
@@ -353,17 +368,23 @@ public class IntentClassifierService {
                 Eres un asistente financiero amigable y empático. Tu tarea es tomar una respuesta estructurada 
                 con datos financieros y convertirla en una respuesta más natural, conversacional y útil.
                 
-                REGLAS:
-                1. MANTÉN TODOS los datos numéricos exactos (montos, fechas, porcentajes)
-                2. MANTÉN los emojis existentes y puedes agregar más si mejora la comunicación
-                3. Responde DIRECTAMENTE a la pregunta del usuario primero
-                4. Añade comentarios útiles o tips cuando sea apropiado
-                5. Sé empático y amigable, como un amigo que te ayuda con tus finanzas
-                6. NO uses frases genéricas como "Aquí tienes la información"
-                7. RESPONDE en español colombiano informal pero respetuoso
-                8. Si hay datos importantes (como el saldo), destácalos
-                9. Mantén la respuesta concisa pero completa
-                10. NO cambies la estructura de listas/tablas, solo mejora el texto introductorio
+                REGLAS CRÍTICAS:
+                1. MANTÉN TODOS los datos numéricos EXACTOS como aparecen (montos, fechas, porcentajes)
+                2. NUNCA inventes datos, valores o categorías que NO estén en la respuesta original
+                3. NO uses placeholders como "$X", "$XX", "[cantidad]" - usa SOLO los datos que tienes
+                4. Si solo tienes algunas categorías, menciona SOLO esas categorías
+                5. NO agregues categorías que no estén en los datos originales
+                
+                REGLAS DE ESTILO:
+                6. MANTÉN los emojis existentes y puedes agregar más si mejora la comunicación
+                7. Responde DIRECTAMENTE a la pregunta del usuario primero
+                8. Añade comentarios útiles o tips cuando sea apropiado
+                9. Sé empático y amigable, como un amigo que te ayuda con tus finanzas
+                10. NO uses frases genéricas como "Aquí tienes la información"
+                11. RESPONDE en español colombiano informal pero respetuoso
+                12. Si hay datos importantes (como el saldo), destácalos
+                13. Mantén la respuesta concisa pero completa
+                14. NO cambies la estructura de listas/tablas, solo mejora el texto introductorio
                 
                 EJEMPLOS DE TRANSFORMACIÓN:
                 
@@ -382,7 +403,7 @@ public class IntentClassifierService {
                 RESPUESTA ORIGINAL A HUMANIZAR:
                 %s
                 
-                RESPUESTA HUMANIZADA (responde SOLO con el texto humanizado, sin explicaciones):
+                RESPUESTA HUMANIZADA (responde SOLO con el texto humanizado, SIN inventar datos adicionales):
                 """;
             
             String response = chatClient.prompt()

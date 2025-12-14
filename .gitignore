@@ -44,3 +44,6 @@ docs/CAMBIOS_MS_CORE_BRAHIAM.md
 docs_v2/
 docs/EPICS_FEATURES_USER_STORIES.md
 docs/TECHNICAL_DOCUMENT.md
+docs/assistant_ddl.sql
+docs/ASSISTANT_EPICS.md
+docs/ASSISTANT_IMPROVEMENTS.md

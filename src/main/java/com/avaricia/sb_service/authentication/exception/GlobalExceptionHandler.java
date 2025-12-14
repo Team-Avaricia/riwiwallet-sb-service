@@ -11,7 +11,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.HashMap;
 import java.util.Map;
 
-@RestControllerAdvice
+/**
+ * Global exception handler for the Authentication module.
+ * Scoped to only handle exceptions from authentication controllers.
+ */
+@RestControllerAdvice(basePackages = "com.avaricia.sb_service.authentication")
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(RuntimeException.class)
