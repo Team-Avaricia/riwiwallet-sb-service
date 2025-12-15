@@ -174,7 +174,7 @@ public class UserMappingService {
         }
         
         String userId = createNewUser(
-            name != null ? name : "Usuario WhatsApp",
+            name != null ? name : "Usuario",
             null,
             phoneNumber
         );

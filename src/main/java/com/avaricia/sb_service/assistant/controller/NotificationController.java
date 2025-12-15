@@ -1,5 +1,12 @@
 package com.avaricia.sb_service.assistant.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,6 +25,7 @@ import com.avaricia.sb_service.assistant.service.UserMappingService;
  */
 @RestController
 @RequestMapping("/api/notifications")
+@Tag(name = "Notifications", description = "Endpoints for sending notifications to users via messaging platforms")
 public class NotificationController {
 
     private final TelegramService telegramService;
@@ -33,14 +41,18 @@ public class NotificationController {
      * 
      * @param request NotificationRequest containing userId and message
      * @return NotificationResponse with success status and details
-     * 
-     * Example request:
-     * POST /api/notifications/telegram
-     * {
-     *   "userId": "d532bd25-b813-4c7c-8af8-b3ca08000c52",
-     *   "message": "💸 Nueva transacción registrada desde el Dashboard"
-     * }
      */
+    @Operation(
+        summary = "Send Telegram notification",
+        description = "Sends a message to a user via Telegram. The user must have their Telegram account linked."
+    )
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Notification sent successfully",
+            content = @Content(schema = @Schema(implementation = NotificationResponse.class))),
+        @ApiResponse(responseCode = "400", description = "Invalid request - missing userId or message"),
+        @ApiResponse(responseCode = "404", description = "User has no linked Telegram account"),
+        @ApiResponse(responseCode = "500", description = "Error sending notification")
+    })
     @PostMapping("/telegram")
     public ResponseEntity<NotificationResponse> sendTelegramNotification(@RequestBody NotificationRequest request) {
         System.out.println("📬 Notification request received for user: " + request.getUserId());

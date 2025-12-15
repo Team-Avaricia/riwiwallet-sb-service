@@ -1,5 +1,7 @@
 package com.avaricia.sb_service.assistant.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
@@ -7,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
+
+import com.avaricia.sb_service.assistant.exception.TranscriptionException;
 
 import java.util.Map;
 
@@ -16,6 +20,8 @@ import java.util.Map;
  */
 @Service
 public class AudioTranscriptionService {
+
+    private static final Logger log = LoggerFactory.getLogger(AudioTranscriptionService.class);
 
     private final RestTemplate restTemplate;
     private final String telegramApiUrl;
@@ -32,21 +38,34 @@ public class AudioTranscriptionService {
         this.openAiApiKey = openAiApiKey;
     }
 
+    /**
+     * Transcribes an audio file from Telegram using OpenAI Whisper.
+     * 
+     * @param fileId The Telegram file ID
+     * @return The transcribed text, or null if transcription fails
+     */
     public String transcribeAudio(String fileId) {
+        log.info("🎤 Starting audio transcription for fileId: {}", fileId);
+        
         try {
             String filePath = getFilePath(fileId);
-            System.out.println("📁 File path obtained: " + filePath);
+            log.debug("📁 File path obtained: {}", filePath);
             
-            byte[] audioData = downloadFile(filePath);
-            System.out.println("📥 Audio downloaded: " + audioData.length + " bytes");
+            byte[] audioData = downloadFile(filePath, fileId);
+            log.debug("📥 Audio downloaded: {} bytes", audioData.length);
             
             String transcription = transcribeWithWhisper(audioData, filePath);
-            System.out.println("🎤 Transcription: " + transcription);
+            log.info("✅ Transcription successful: '{}...'", 
+                transcription.length() > 50 ? transcription.substring(0, 50) : transcription);
             
             return transcription;
+            
+        } catch (TranscriptionException e) {
+            // Already logged, just re-throw with user message
+            log.warn("🎤 Transcription failed: {}", e.getMessage());
+            return null;
         } catch (Exception e) {
-            System.err.println("Error transcribing audio: " + e.getMessage());
-            e.printStackTrace();
+            log.error("🎤 Unexpected error during transcription: {}", e.getMessage(), e);
             return null;
         }
     }
@@ -55,37 +74,62 @@ public class AudioTranscriptionService {
     private String getFilePath(String fileId) {
         String url = telegramApiUrl + "/getFile?file_id=" + fileId;
         
-        Map<String, Object> response = restTemplate.getForObject(url, Map.class);
-        
-        if (response != null && Boolean.TRUE.equals(response.get("ok"))) {
-            Map<String, Object> result = (Map<String, Object>) response.get("result");
-            return (String) result.get("file_path");
+        try {
+            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
+            
+            if (response != null && Boolean.TRUE.equals(response.get("ok"))) {
+                Map<String, Object> result = (Map<String, Object>) response.get("result");
+                String filePath = (String) result.get("file_path");
+                log.debug("📂 Telegram file path resolved: {}", filePath);
+                return filePath;
+            }
+            
+            log.error("❌ Telegram API returned error for fileId: {}", fileId);
+            throw TranscriptionException.telegramDownloadFailed(fileId, 
+                new RuntimeException("Telegram API returned unsuccessful response"));
+                
+        } catch (TranscriptionException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("❌ Failed to get file path from Telegram: {}", e.getMessage());
+            throw TranscriptionException.telegramDownloadFailed(fileId, e);
         }
-        
-        throw new RuntimeException("Failed to get file path from Telegram");
     }
 
-    private byte[] downloadFile(String filePath) {
+    private byte[] downloadFile(String filePath, String fileId) {
         String url = telegramFileUrl + "/" + filePath;
         
-        ResponseEntity<byte[]> response = restTemplate.exchange(
-            url, 
-            HttpMethod.GET, 
-            null, 
-            byte[].class
-        );
-        
-        if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-            return response.getBody();
+        try {
+            ResponseEntity<byte[]> response = restTemplate.exchange(
+                url, 
+                HttpMethod.GET, 
+                null, 
+                byte[].class
+            );
+            
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                log.debug("📦 File downloaded successfully: {} bytes", response.getBody().length);
+                return response.getBody();
+            }
+            
+            log.error("❌ Failed to download file from Telegram: status={}", response.getStatusCode());
+            throw TranscriptionException.telegramDownloadFailed(fileId, 
+                new RuntimeException("Download returned status: " + response.getStatusCode()));
+                
+        } catch (TranscriptionException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("❌ Error downloading file from Telegram: {}", e.getMessage());
+            throw TranscriptionException.telegramDownloadFailed(fileId, e);
         }
-        
-        throw new RuntimeException("Failed to download file from Telegram");
     }
 
     private String transcribeWithWhisper(byte[] audioData, String filePath) {
         String fileName = filePath.contains("/") 
             ? filePath.substring(filePath.lastIndexOf("/") + 1) 
             : filePath;
+        
+        log.debug("🎙️ Sending audio to Whisper API: {} ({} bytes)", fileName, audioData.length);
         
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
@@ -115,13 +159,21 @@ public class AudioTranscriptionService {
             );
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return response.getBody().trim();
+                String transcription = response.getBody().trim();
+                log.debug("✅ Whisper transcription received: {} characters", transcription.length());
+                return transcription;
             }
+            
+            log.error("❌ Whisper API returned unsuccessful response: {}", response.getStatusCode());
+            throw TranscriptionException.whisperApiFailed(
+                new RuntimeException("Whisper API returned status: " + response.getStatusCode()));
+                
+        } catch (TranscriptionException e) {
+            throw e;
         } catch (Exception e) {
-            System.err.println("Whisper API error: " + e.getMessage());
-            throw new RuntimeException("Failed to transcribe audio with Whisper", e);
+            log.error("❌ Whisper API error: {}", e.getMessage(), e);
+            throw TranscriptionException.whisperApiFailed(e);
         }
-
-        throw new RuntimeException("Failed to transcribe audio with Whisper");
     }
 }
+
