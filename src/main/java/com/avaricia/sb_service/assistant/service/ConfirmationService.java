@@ -2,8 +2,10 @@ package com.avaricia.sb_service.assistant.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
+import com.avaricia.sb_service.assistant.dto.ConfirmationIntent;
 import com.avaricia.sb_service.assistant.dto.IntentResult;
 import com.avaricia.sb_service.assistant.dto.PendingAction;
 import com.avaricia.sb_service.assistant.dto.PendingBatchAction;
@@ -11,7 +13,9 @@ import com.avaricia.sb_service.assistant.dto.PendingBatchAction;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 /**
  * Service for managing pending actions that require user confirmation.
@@ -22,9 +26,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * - 60 second timeout for confirmations
  * - Automatic cleanup of expired actions
  * - Support for batch confirmations when multiple high-value transactions are sent together
+ * - Hybrid confirmation detection: fast regex + AI fallback for ambiguous messages
  */
 @Service
 public class ConfirmationService {
+
+    private final ChatClient chatClient;
 
     private static final Logger log = LoggerFactory.getLogger(ConfirmationService.class);
 
@@ -32,6 +39,54 @@ public class ConfirmationService {
      * Threshold amount that requires confirmation (3,000,000 COP)
      */
     public static final double CONFIRMATION_THRESHOLD = 3_000_000.0;
+
+    // ==================== CONFIRMATION KEYWORDS ====================
+    
+    /**
+     * Exact words that indicate confirmation (case insensitive)
+     */
+    private static final Set<String> CONFIRMATION_WORDS = Set.of(
+        "sí", "si", "confirmar", "confirmo", "yes", "ok", "dale", "hazlo", 
+        "adelante", "listo", "va", "claro", "por supuesto", "afirmativo",
+        "correcto", "exacto", "perfecto", "bueno", "bien", "procede"
+    );
+
+    /**
+     * Patterns that indicate confirmation (compiled for performance)
+     * Matches phrases like "si hazlo", "dale pues", "ok registralo", etc.
+     */
+    private static final Pattern CONFIRMATION_PATTERN = Pattern.compile(
+        "^(s[ií]|dale|ok|claro|bueno)\\s+.{0,25}$|" +        // Starts with confirmation word + short phrase
+        "quiero\\s+confirmar|" +                              // "quiero confirmar"
+        "confirmo\\s+(la|el|esto|eso)|" +                     // "confirmo la/el/esto/eso"
+        "reg[ií]stra(lo|me|r)|" +                             // "registralo", "registrame", "registrar"
+        "hazlo\\s+(ya|pues|ahora)|" +                         // "hazlo ya/pues/ahora"
+        "(est[aá]|todo)\\s+bien",                             // "está bien", "todo bien"
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+    );
+
+    /**
+     * Exact words that indicate cancellation (case insensitive)
+     */
+    private static final Set<String> CANCELLATION_WORDS = Set.of(
+        "no", "cancelar", "cancelo", "cancel", "anular", "olvídalo", "olvidalo",
+        "mejor no", "nope", "nel", "negativo", "para nada", "nunca"
+    );
+
+    /**
+     * Patterns that indicate cancellation
+     */
+    private static final Pattern CANCELLATION_PATTERN = Pattern.compile(
+        "^no\\s+.{0,20}$|" +                                  // Starts with "no" + short phrase
+        "no\\s+(quiero|gracias|lo\\s+hagas)|" +               // "no quiero", "no gracias", "no lo hagas"
+        "mejor\\s+no|" +                                      // "mejor no"
+        "olv[ií]da(lo|te)|" +                                 // "olvidalo", "olvidate"
+        "dej[aá]\\s*(lo|eso)|" +                              // "deja eso", "déjalo"
+        "cancela\\s*(lo|eso|r)?",                             // "cancela", "cancelalo"
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+    );
+
+    // ==================== STATE MANAGEMENT ====================
 
     /**
      * Map of telegramId -> pending single action
@@ -42,6 +97,12 @@ public class ConfirmationService {
      * Map of telegramId -> pending batch action
      */
     private final Map<Long, PendingBatchAction> pendingBatchActions = new ConcurrentHashMap<>();
+
+    // ==================== CONSTRUCTOR ====================
+
+    public ConfirmationService(ChatClient.Builder chatClientBuilder) {
+        this.chatClient = chatClientBuilder.build();
+    }
 
     /**
      * Checks if an amount requires confirmation.
@@ -304,35 +365,142 @@ public class ConfirmationService {
 
     /**
      * Checks if a message is a confirmation response.
+     * Uses compiled patterns and word sets for efficiency.
+     * 
+     * @param message The user's message
+     * @return true if the message indicates confirmation
      */
     public boolean isConfirmationMessage(String message) {
-        if (message == null) return false;
+        if (message == null || message.isBlank()) return false;
+        
         String normalized = message.toLowerCase().trim();
-        return normalized.equals("sí") ||
-               normalized.equals("si") ||
-               normalized.equals("confirmar") ||
-               normalized.equals("confirmo") ||
-               normalized.equals("yes") ||
-               normalized.equals("ok") ||
-               normalized.equals("dale") ||
-               normalized.equals("hazlo") ||
-               normalized.equals("adelante");
+        
+        // Check exact word matches first (O(1) lookup)
+        if (CONFIRMATION_WORDS.contains(normalized)) {
+            return true;
+        }
+        
+        // Check pattern matches for phrases
+        return CONFIRMATION_PATTERN.matcher(normalized).find();
     }
 
     /**
      * Checks if a message is a cancellation response.
+     * Uses compiled patterns and word sets for efficiency.
+     * 
+     * @param message The user's message
+     * @return true if the message indicates cancellation
      */
     public boolean isCancellationMessage(String message) {
-        if (message == null) return false;
+        if (message == null || message.isBlank()) return false;
+        
         String normalized = message.toLowerCase().trim();
-        return normalized.equals("no") ||
-               normalized.equals("cancelar") ||
-               normalized.equals("cancelo") ||
-               normalized.equals("cancel") ||
-               normalized.equals("anular") ||
-               normalized.equals("olvídalo") ||
-               normalized.equals("olvidalo") ||
-               normalized.equals("mejor no");
+        
+        // Check exact word matches first (O(1) lookup)
+        if (CANCELLATION_WORDS.contains(normalized)) {
+            return true;
+        }
+        
+        // Check pattern matches for phrases
+        return CANCELLATION_PATTERN.matcher(normalized).find();
+    }
+
+    // ==================== HYBRID AI CLASSIFICATION ====================
+
+    /**
+     * Classifies a message as confirmation, cancellation, or unclear using a hybrid approach.
+     * 
+     * Strategy:
+     * 1. Fast path: Check exact word matches (O(1) with Set)
+     * 2. Medium path: Check regex patterns (compiled for performance)
+     * 3. Slow path: Use AI to classify ambiguous messages
+     * 
+     * This approach optimizes for speed in common cases while maintaining
+     * flexibility for complex or ambiguous user responses.
+     * 
+     * @param message The user's message
+     * @return ConfirmationIntent indicating CONFIRM, CANCEL, or UNCLEAR
+     */
+    public ConfirmationIntent classifyConfirmationIntent(String message) {
+        if (message == null || message.isBlank()) {
+            return ConfirmationIntent.UNCLEAR;
+        }
+        
+        String normalized = message.toLowerCase().trim();
+        
+        // Fast path: exact word matches
+        if (CONFIRMATION_WORDS.contains(normalized)) {
+            log.debug("✅ Fast path confirmation: '{}'", message);
+            return ConfirmationIntent.CONFIRM;
+        }
+        if (CANCELLATION_WORDS.contains(normalized)) {
+            log.debug("❌ Fast path cancellation: '{}'", message);
+            return ConfirmationIntent.CANCEL;
+        }
+        
+        // Medium path: regex pattern matches
+        if (CONFIRMATION_PATTERN.matcher(normalized).find()) {
+            log.debug("✅ Pattern confirmation: '{}'", message);
+            return ConfirmationIntent.CONFIRM;
+        }
+        if (CANCELLATION_PATTERN.matcher(normalized).find()) {
+            log.debug("❌ Pattern cancellation: '{}'", message);
+            return ConfirmationIntent.CANCEL;
+        }
+        
+        // Slow path: AI classification for ambiguous messages
+        log.debug("🤖 Using AI to classify ambiguous message: '{}'", message);
+        return classifyWithAI(message);
+    }
+
+    /**
+     * Uses OpenAI to classify an ambiguous message as confirmation or cancellation.
+     * Only called when fast/medium paths fail to match.
+     * 
+     * @param message The ambiguous message to classify
+     * @return ConfirmationIntent based on AI analysis
+     */
+    private ConfirmationIntent classifyWithAI(String message) {
+        try {
+            String prompt = """
+                Analiza el siguiente mensaje y determina si el usuario está:
+                1. CONFIRMANDO una acción (quiere proceder)
+                2. CANCELANDO una acción (no quiere proceder)
+                3. UNCLEAR - el mensaje no es una respuesta de confirmación/cancelación
+                
+                El usuario tiene una transacción financiera pendiente y se le preguntó si quiere confirmarla.
+                
+                Responde SOLO con una de estas tres palabras: CONFIRM, CANCEL, o UNCLEAR
+                
+                Mensaje del usuario: "%s"
+                
+                Tu respuesta (solo una palabra):
+                """.formatted(message);
+            
+            String response = chatClient.prompt()
+                    .user(prompt)
+                    .call()
+                    .content();
+            
+            if (response == null || response.isBlank()) {
+                log.warn("⚠️ AI returned empty response for message: '{}'", message);
+                return ConfirmationIntent.UNCLEAR;
+            }
+            
+            String aiDecision = response.trim().toUpperCase();
+            log.debug("🤖 AI classified '{}' as: {}", message, aiDecision);
+            
+            return switch (aiDecision) {
+                case "CONFIRM" -> ConfirmationIntent.CONFIRM;
+                case "CANCEL" -> ConfirmationIntent.CANCEL;
+                default -> ConfirmationIntent.UNCLEAR;
+            };
+            
+        } catch (Exception e) {
+            log.error("❌ Error classifying message with AI: {}", e.getMessage());
+            // Fallback to UNCLEAR if AI fails
+            return ConfirmationIntent.UNCLEAR;
+        }
     }
 
     /**

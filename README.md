@@ -1,10 +1,10 @@
 # RiwiWallet - AI Financial Assistant Microservice
 
-AI-powered financial assistant microservice for RiwiWallet. Integrates with Telegram and WhatsApp to provide conversational financial management using Spring AI and OpenAI GPT-4.
+AI-powered financial assistant microservice for RiwiWallet. Integrates with Telegram to provide conversational financial management using Spring AI and OpenAI GPT-4.
 
 ## 🚀 Features
 
-- **Multi-platform Chat Integration**: Telegram Bot API + WhatsApp Cloud API
+- **Telegram Chat Integration**: Telegram Bot API
 - **Voice Message Support**: Audio transcription via OpenAI Whisper
 - **AI-Powered Intent Classification**: GPT-4o-mini for understanding financial intents
 - **Conversation History**: Context-aware responses with 30-minute TTL
@@ -35,17 +35,16 @@ AI-powered financial assistant microservice for RiwiWallet. Integrates with Tele
 - **OpenAI GPT-4o-mini** (intent classification)
 - **OpenAI Whisper** (audio transcription)
 - **Telegram Bot API**
-- **WhatsApp Cloud API (Meta Graph API v24.0)**
 
 ## 📁 Project Structure
 
 ```
 src/main/java/com/avaricia/sb_service/assistant/
 ├── controller/
-│   ├── TelegramController.java    # Telegram webhook
-│   └── WhatsAppController.java    # WhatsApp webhook
+│   ├── TelegramController.java       # Telegram webhook
+│   └── NotificationController.java   # Notification API
 ├── dto/
-│   └── IntentResult.java          # Intent classification result
+│   └── IntentResult.java             # Intent classification result
 └── service/
     ├── AudioTranscriptionService.java   # Whisper API integration
     ├── ConversationHistoryService.java  # Chat context management
@@ -55,8 +54,7 @@ src/main/java/com/avaricia/sb_service/assistant/
     ├── MockCoreApiService.java          # In-memory mock backend
     ├── OpenAIService.java               # ChatClient wrapper
     ├── TelegramService.java             # Telegram message sender
-    ├── UserMappingService.java          # Platform user mapping
-    └── WhatsAppService.java             # WhatsApp message sender
+    └── UserMappingService.java          # Platform user mapping
 ```
 
 ## ⚙️ Configuration
@@ -70,10 +68,6 @@ OPENAI_API_KEY=sk-xxx
 # Telegram
 TELEGRAM_BOT_TOKEN=123456:ABC-xxx
 TELEGRAM_BOT_USERNAME=@YourBot
-
-# WhatsApp (Meta)
-WHATSAPP_PHONE_NUMBER_ID=123456789
-WHATSAPP_ACCESS_TOKEN=EAAGxxx
 
 # MS Core Backend
 MS_CORE_BASE_URL=http://localhost:8080
@@ -90,10 +84,6 @@ spring.ai.openai.chat.options.model=gpt-4o-mini
 # Telegram
 telegram.bot.token=${TELEGRAM_BOT_TOKEN}
 telegram.bot.username=${TELEGRAM_BOT_USERNAME}
-
-# WhatsApp
-whatsapp.phone.number.id=${WHATSAPP_PHONE_NUMBER_ID}
-whatsapp.access.token=${WHATSAPP_ACCESS_TOKEN}
 
 # MS Core API
 ms.core.base-url=${MS_CORE_BASE_URL}
@@ -136,14 +126,18 @@ Receives Telegram updates. Configure webhook via:
 https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://your-domain.com/telegram/webhook
 ```
 
-### WhatsApp
+### Notifications
 
 ```
-GET  /whatsapp/webhook  # Meta verification
-POST /whatsapp/webhook  # Receive messages
+POST /api/notifications/telegram  # Send notification to user via Telegram
 ```
 
-Configure in Meta Developer Console with verify token: `mi_secreto_123`
+### Swagger UI
+
+```
+GET /swagger-ui.html              # Interactive API documentation
+GET /v3/api-docs                  # OpenAPI JSON specification
+```
 
 ## 🧪 Mock Mode
 

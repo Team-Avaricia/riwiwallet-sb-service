@@ -397,12 +397,24 @@ public class TransactionHandlerService {
             return "🔍 Función disponible solo con el API real.\n\n🧪 _[Modo prueba]_";
         }
         
+        // Check both searchQuery and category - use whichever is available
         String query = intent.getSearchQuery();
-        if (query == null || query.isEmpty()) {
-            return "❌ No pude determinar qué buscar. Por favor especifica: \"¿Cuánto he pagado de Netflix?\"";
+        String category = intent.getCategory();
+        String searchTerm = null;
+        boolean isCategory = false;
+        
+        if (query != null && !query.isEmpty()) {
+            searchTerm = query;
+        } else if (category != null && !category.isEmpty()) {
+            searchTerm = category;
+            isCategory = true;
         }
         
-        Map<String, Object> result = coreApi.searchTransactions(userId, query);
+        if (searchTerm == null || searchTerm.isEmpty()) {
+            return "❌ No pude determinar qué buscar. Por favor especifica: \"¿Cuánto he pagado de Netflix?\" o \"Gastos de categoría Comida\"";
+        }
+        
+        Map<String, Object> result = coreApi.searchTransactions(userId, searchTerm);
         
         if (result.containsKey("error")) {
             return "❌ No pude buscar las transacciones. " + result.get("error");
@@ -413,11 +425,17 @@ public class TransactionHandlerService {
         Integer count = result.get("count") != null ? ((Number) result.get("count")).intValue() : 0;
         
         if (transactions == null || transactions.isEmpty()) {
-            return String.format("🔍 No encontré transacciones relacionadas con \"%s\"", query);
+            String errorMsg = isCategory 
+                ? String.format("🔍 No encontré transacciones en la categoría \"%s\"", searchTerm)
+                : String.format("🔍 No encontré transacciones relacionadas con \"%s\"", searchTerm);
+            return errorMsg;
         }
         
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("🔍 *Resultados para \"%s\":*\n\n", query));
+        String title = isCategory 
+            ? String.format("🔍 *Gastos en categoría \"%s\":*\n\n", searchTerm)
+            : String.format("🔍 *Resultados para \"%s\":*\n\n", searchTerm);
+        sb.append(title);
         
         for (Map<String, Object> tx : transactions) {
             String type = (String) tx.get("type");
@@ -429,7 +447,10 @@ public class TransactionHandlerService {
             sb.append(String.format("%s $%s - %s %s\n", emoji, amountObj, descriptionTx, dateStr));
         }
         
-        sb.append(String.format("\n\n📊 *Total en \"%s\":* $%,.0f (%d transacciones)", query, totalAmount, count));
+        String totalLabel = isCategory 
+            ? String.format("\n\n📊 *Total en categoría \"%s\":* $%,.0f (%d transacciones)", searchTerm, totalAmount, count)
+            : String.format("\n\n📊 *Total en \"%s\":* $%,.0f (%d transacciones)", searchTerm, totalAmount, count);
+        sb.append(totalLabel);
         
         return sb.toString();
     }

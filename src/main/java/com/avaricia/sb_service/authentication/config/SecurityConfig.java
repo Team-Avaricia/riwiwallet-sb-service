@@ -32,10 +32,14 @@ public class SecurityConfig {
                         .requestMatchers("/oauth2/**").permitAll()
                         .requestMatchers("/login/**").permitAll()
                         .requestMatchers("/api/telegram/**").permitAll()
-                        .requestMatchers("/api/whatsapp/**").permitAll()
                         .requestMatchers("/telegram/**").permitAll()
-                        .requestMatchers("/whatsapp/**").permitAll()
                         .requestMatchers("/api/notifications/**").permitAll()
+                        // Swagger UI & OpenAPI docs
+                        .requestMatchers("/swagger-ui/**").permitAll()
+                        .requestMatchers("/swagger-ui.html").permitAll()
+                        .requestMatchers("/v3/api-docs/**").permitAll()
+                        .requestMatchers("/swagger-resources/**").permitAll()
+                        .requestMatchers("/webjars/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session
