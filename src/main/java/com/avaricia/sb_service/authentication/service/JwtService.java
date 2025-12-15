@@ -25,6 +25,10 @@ public class JwtService {
     private long jwtExpiration;
 
     public String extractUsername(String token) {
+        return extractClaim(token, claims -> claims.get("email", String.class));
+    }
+    
+    public String extractUserId(String token) {
         return extractClaim(token, Claims::getSubject);
     }
 
@@ -46,10 +50,16 @@ public class JwtService {
             UserDetails userDetails,
             long expiration
     ) {
+        // Cast to User to access getId()
+        com.avaricia.sb_service.authentication.model.User user = 
+            (com.avaricia.sb_service.authentication.model.User) userDetails;
+        
         return Jwts
                 .builder()
                 .setClaims(extraClaims)
-                .setSubject(userDetails.getUsername())
+                .setSubject(user.getId().toString()) // userId as subject (CRITICAL for frontend)
+                .claim("username", user.getName())
+                .claim("email", user.getEmail())
                 .setIssuedAt(new Date(System.currentTimeMillis()))
                 .setExpiration(new Date(System.currentTimeMillis() + expiration))
                 .signWith(getSignInKey(), SignatureAlgorithm.HS256)
