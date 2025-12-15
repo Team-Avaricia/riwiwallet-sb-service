@@ -3,12 +3,12 @@ package com.avaricia.sb_service.authentication.service;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 import java.util.HashMap;
@@ -25,6 +25,10 @@ public class JwtService {
     private long jwtExpiration;
 
     public String extractUsername(String token) {
+        return extractClaim(token, claims -> claims.get("email", String.class));
+    }
+    
+    public String extractUserId(String token) {
         return extractClaim(token, Claims::getSubject);
     }
 
@@ -46,10 +50,16 @@ public class JwtService {
             UserDetails userDetails,
             long expiration
     ) {
+        // Cast to User to access getId()
+        com.avaricia.sb_service.authentication.model.User user = 
+            (com.avaricia.sb_service.authentication.model.User) userDetails;
+        
         return Jwts
                 .builder()
                 .setClaims(extraClaims)
-                .setSubject(userDetails.getUsername())
+                .setSubject(user.getId().toString()) // userId as subject (CRITICAL for frontend)
+                .claim("username", user.getName())
+                .claim("email", user.getEmail())
                 .setIssuer("RiwiWalletAPI")           // Must match .NET Jwt:Issuer
                 .setAudience("RiwiWalletClients")     // Must match .NET Jwt:Audience
                 .setIssuedAt(new Date(System.currentTimeMillis()))
@@ -80,8 +90,14 @@ public class JwtService {
                 .getBody();
     }
 
+    /**
+     * Get the signing key from the secret.
+     * Uses UTF-8 encoding to match .NET's Encoding.UTF8.GetBytes() behavior.
+     */
     private Key getSignInKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(secretKey);
+        // Use UTF-8 encoding to match .NET's Encoding.UTF8.GetBytes(secretKey)
+        byte[] keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 }
+
