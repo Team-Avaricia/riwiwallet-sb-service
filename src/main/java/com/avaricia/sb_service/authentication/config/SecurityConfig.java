@@ -30,7 +30,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/oauth2/**").permitAll()
+                        .requestMatchers("/auth/oauth2/**").permitAll()
                         .requestMatchers("/login/**").permitAll()
+                        .requestMatchers("/auth/login/**").permitAll()
                         .requestMatchers("/api/telegram/**").permitAll()
                         .requestMatchers("/telegram/**").permitAll()
                         .requestMatchers("/api/notifications/**").permitAll()
