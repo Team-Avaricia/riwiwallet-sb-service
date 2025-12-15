@@ -2,6 +2,10 @@ package com.avaricia.sb_service.assistant.controller;
 
 import java.util.HashMap;
 
+import io.swagger.v3.oas.annotations.Hidden;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -16,6 +20,7 @@ import com.avaricia.sb_service.assistant.service.UserMappingService.LinkResult;
 
 @RestController
 @RequestMapping("/telegram")
+@Tag(name = "Telegram Webhook", description = "Webhook endpoint for Telegram Bot API integration")
 public class TelegramController {
 
     private final MessageProcessorService messageProcessor;
@@ -35,6 +40,11 @@ public class TelegramController {
     }
 
     @SuppressWarnings("unchecked")
+    @Operation(
+        summary = "Telegram Webhook",
+        description = "Receives updates from Telegram Bot API. This endpoint is called by Telegram when a user sends a message to the bot."
+    )
+    @ApiResponse(responseCode = "200", description = "Update processed successfully")
     @PostMapping("/webhook")
     public ResponseEntity<String> onUpdate(@RequestBody HashMap<String, Object> update) {
         System.out.println("Update recibido: " + update);

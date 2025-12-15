@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.avaricia.sb_service.assistant.dto.ConfirmationIntent;
 import com.avaricia.sb_service.assistant.dto.IntentResult;
 import com.avaricia.sb_service.assistant.dto.PendingAction;
 import com.avaricia.sb_service.assistant.dto.PendingBatchAction;
@@ -141,40 +142,47 @@ public class MessageProcessorService {
         
         log.debug("⏳ User {} has pending confirmation, checking response: '{}'", telegramId, message);
         
-        // Check if message is a confirmation
-        if (confirmationService.isConfirmationMessage(message)) {
-            // Try single action first
-            Optional<PendingAction> singleActionOpt = confirmationService.confirmAction(telegramId);
-            if (singleActionOpt.isPresent()) {
-                PendingAction action = singleActionOpt.get();
-                String type = "create_expense".equals(action.getActionType()) ? "Expense" : "Income";
-                log.info("✅ User {} confirmed high-value transaction: {} of ${}",
-                    telegramId, type, String.format("%,.0f", action.getIntent().getAmount()));
-                return transactionHandler.executeTransaction(action.getUserId(), action.getIntent(), type);
+        // Use hybrid classification (fast regex + AI fallback)
+        ConfirmationIntent intent = confirmationService.classifyConfirmationIntent(message);
+        
+        switch (intent) {
+            case CONFIRM -> {
+                // Try single action first
+                Optional<PendingAction> singleActionOpt = confirmationService.confirmAction(telegramId);
+                if (singleActionOpt.isPresent()) {
+                    PendingAction action = singleActionOpt.get();
+                    String type = "create_expense".equals(action.getActionType()) ? "Expense" : "Income";
+                    log.info("✅ User {} confirmed high-value transaction: {} of ${}",
+                        telegramId, type, String.format("%,.0f", action.getIntent().getAmount()));
+                    return transactionHandler.executeTransaction(action.getUserId(), action.getIntent(), type);
+                }
+                
+                // Try batch action
+                Optional<PendingBatchAction> batchActionOpt = confirmationService.confirmBatchAction(telegramId);
+                if (batchActionOpt.isPresent()) {
+                    PendingBatchAction batchAction = batchActionOpt.get();
+                    log.info("✅ User {} confirmed batch of {} high-value transactions",
+                        telegramId, batchAction.size());
+                    return executeBatchAction(batchAction);
+                }
+                
+                return confirmationService.getExpiredMessage();
             }
             
-            // Try batch action
-            Optional<PendingBatchAction> batchActionOpt = confirmationService.confirmBatchAction(telegramId);
-            if (batchActionOpt.isPresent()) {
-                PendingBatchAction batchAction = batchActionOpt.get();
-                log.info("✅ User {} confirmed batch of {} high-value transactions",
-                    telegramId, batchAction.size());
-                return executeBatchAction(batchAction);
+            case CANCEL -> {
+                confirmationService.cancelAction(telegramId);
+                log.info("❌ User {} cancelled pending transaction(s)", telegramId);
+                return confirmationService.getCancellationMessage();
             }
             
-            return confirmationService.getExpiredMessage();
+            case UNCLEAR -> {
+                // Message is neither confirmation nor cancellation - clear pending and process normally
+                log.debug("🔄 User {} sent unclear message, clearing pending confirmation", telegramId);
+                confirmationService.cancelAction(telegramId);
+                return null;
+            }
         }
         
-        // Check if message is a cancellation
-        if (confirmationService.isCancellationMessage(message)) {
-            confirmationService.cancelAction(telegramId);
-            log.info("❌ User {} cancelled pending transaction(s)", telegramId);
-            return confirmationService.getCancellationMessage();
-        }
-        
-        // Message is neither confirmation nor cancellation - clear pending and process normally
-        log.debug("🔄 User {} sent new message, clearing pending confirmation", telegramId);
-        confirmationService.cancelAction(telegramId);
         return null;
     }
 

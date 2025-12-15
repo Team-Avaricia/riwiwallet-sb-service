@@ -30,8 +30,9 @@ public class IntentClassifierService {
             
             ⚠️ REGLA CRÍTICA - DIFERENCIA ENTRE PREGUNTAR Y REGISTRAR:
             - "¿Puedo gastar...?", "¿Me alcanza para...?", "¿Debería comprar...?" = SOLO VALIDAR (validate_expense), NO registrar
-            - "Gasté...", "Compré...", "Pagué...", "Me gasté..." = REGISTRAR gasto (create_expense)
-            - "Recibí...", "Me pagaron...", "Gané..." = REGISTRAR ingreso (create_income)
+            - "Gasté...", "Compré...", "Pagué...", "Me gasté...", "Me cobraron..." = REGISTRAR gasto (create_expense)
+              ⚠️ "Me cobraron" = GASTO (le quitaron dinero al usuario)
+            - "Recibí...", "Me pagaron...", "Gané...", "Me transfirieron..." = REGISTRAR ingreso (create_income)
             
             NUNCA registres un gasto cuando el usuario solo está PREGUNTANDO o CONSULTANDO.
             
@@ -116,9 +117,11 @@ public class IntentClassifierService {
             CLASIFICACIÓN DE CATEGORÍAS - GASTOS:
             - COMIDA: almuerzo, desayuno, cena, restaurante, café, gaseosa, bebida, snack, pizza, hamburguesa, comida rápida, pan, postres, etc.
             - TRANSPORTE: taxi, Uber, bus, gasolina, parqueadero, moto, carro, cuota del carro, pasaje, vuelo, peajes, SOAT, etc.
-            - ENTRETENIMIENTO: cine, Netflix, Spotify, Prime Video, Disney+, Amazon Prime, HBO, juegos, conciertos, viajes, vacaciones, etc.
+            - ENTRETENIMIENTO: cine, Netflix, Spotify, Prime Video, Disney+, Amazon Prime, HBO, YouTube Premium, Twitch, Apple TV+, Crunchyroll, juegos, PlayStation, Xbox, Steam, videojuegos, conciertos, viajes, vacaciones, bares, discotecas, fiestas, etc.
+              ⚠️ IMPORTANTE: Netflix, Spotify, Disney+, HBO y TODOS los servicios de streaming son SIEMPRE "Entretenimiento", NUNCA "Servicios"
             - VIVIENDA: hipoteca, crédito hipotecario, cuota de la casa, apartamento propio, etc.
-            - SERVICIOS: internet, TV por cable, luz, agua, gas, telefonía, plan de datos, seguros, etc.
+            - SERVICIOS: internet (conexión a internet, fibra, wifi), TV por cable (no streaming), luz, agua, gas, telefonía, plan de datos, seguros, servicios públicos, etc.
+              ⚠️ IMPORTANTE: "Servicios" es SOLO para servicios públicos y telecomunicaciones básicas, NO para streaming
             - SALUD: medicinas, doctor, farmacia, hospital, dentista, psicólogo, etc.
             - EDUCACIÓN: cursos, libros, universidad, escuela, clases, etc.
             - HOGAR: muebles, decoración, reparaciones, herramientas, etc.
@@ -249,11 +252,22 @@ public class IntentClassifierService {
             - "¿Cuánto gané del 1 al 15?" (sin mes) -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":"Income","period":null,"startDate":"2025-12-01","endDate":"2025-12-15","searchQuery":null,"response":"Consultando tus ingresos del 1 al 15 de diciembre..."}
             - "Resumen del mes pasado" -> {"intent":"list_transactions_by_range","amount":null,"category":null,"description":null,"type":null,"period":null,"startDate":"2025-11-01","endDate":"2025-11-30","searchQuery":null,"response":"Consultando tus transacciones de noviembre..."}
             
-            Búsqueda:
+            Búsqueda por descripción:
             - "¿Cuánto pago por Netflix?" -> {"intent":"search_transactions","amount":null,"category":null,"description":null,"type":null,"period":null,"startDate":null,"endDate":null,"searchQuery":"Netflix","response":"Buscando tus pagos de Netflix..."}
+            
+            Búsqueda por categoría:
+            - "Gastos de categoría Comida" -> {"intent":"search_transactions","amount":null,"category":"Comida","description":null,"type":null,"period":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Buscando tus gastos en la categoría Comida..."}
+            - "Dame los gastos de Transporte" -> {"intent":"search_transactions","amount":null,"category":"Transporte","description":null,"type":null,"period":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Buscando tus gastos en Transporte..."}
             
             Balance:
             - "¿Cuánto dinero tengo?" -> {"intent":"get_balance","amount":null,"category":null,"description":null,"type":null,"period":null,"startDate":null,"endDate":null,"searchQuery":null,"response":"Consultando tu saldo actual..."}
+            
+            Crear reglas (IMPORTANTE: extraer la categoría del mensaje):
+            - "Pon un límite de 500k para comida" -> {"intent":"create_rule","amount":500000,"category":"Comida","description":null,"type":null,"period":"Monthly","startDate":null,"endDate":null,"searchQuery":null,"response":"Creando límite de $500,000 para Comida..."}
+            - "Quiero gastar máximo 200k en entretenimiento" -> {"intent":"create_rule","amount":200000,"category":"Entretenimiento","description":null,"type":null,"period":"Monthly","startDate":null,"endDate":null,"searchQuery":null,"response":"Creando límite de $200,000 para Entretenimiento..."}
+            - "Límite de 300k en transporte al mes" -> {"intent":"create_rule","amount":300000,"category":"Transporte","description":null,"type":null,"period":"Monthly","startDate":null,"endDate":null,"searchQuery":null,"response":"Creando límite de $300,000 para Transporte..."}
+            - "Presupuesto semanal de 100k para ropa" -> {"intent":"create_rule","amount":100000,"category":"Ropa","description":null,"type":null,"period":"Weekly","startDate":null,"endDate":null,"searchQuery":null,"response":"Creando límite semanal de $100,000 para Ropa..."}
+            - "Límite mensual de 1M en gastos" -> {"intent":"create_rule","amount":1000000,"category":"General","description":null,"type":null,"period":"Monthly","startDate":null,"endDate":null,"searchQuery":null,"response":"Creando límite general de $1,000,000..."}
             """;
 
     public IntentClassifierService(ChatClient.Builder chatClientBuilder, ConversationHistoryService conversationHistory) {
