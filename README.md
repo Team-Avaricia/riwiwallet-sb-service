@@ -14,7 +14,7 @@ AI-powered financial assistant microservice for RiwiWallet. Integrates with Tele
 
 | Intent | Description | Example |
 |--------|-------------|---------|
-| `create_expense` | Register an expense | "Gasté 50k en comida" |
+| `create_expense` | Register an expense | "Gasté 50k en comida." |
 | `create_income` | Register income | "Recibí mi sueldo de 2M" |
 | `list_transactions` | View recent transactions | "Muéstrame mis gastos" |
 | `list_transactions_by_date` | Query by specific date | "¿Cuánto gasté el 15 de noviembre?" |
