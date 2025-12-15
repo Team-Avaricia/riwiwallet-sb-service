@@ -40,6 +40,7 @@ AI-powered financial assistant microservice for RiwiWallet. Integrates with Tele
 ## 📁 Project Structure
 
 ```
+
 src/main/java/com/avaricia/sb_service/assistant/
 ├── controller/
 │   ├── TelegramController.java    # Telegram webhook
