@@ -92,8 +92,8 @@ public class RuleHandlerService {
         
         // Create the new rule
         Map<String, Object> result = useMock
-            ? mockCoreApi.createRule(userId, "MonthlyBudget", category, amount, period)
-            : coreApi.createRule(userId, "MonthlyBudget", category, amount, period);
+            ? mockCoreApi.createRule(userId, "CategoryBudget", category, amount, period)
+            : coreApi.createRule(userId, "CategoryBudget", category, amount, period);
         
         if (result.containsKey("error")) {
             return "❌ No pude crear la regla. " + result.get("error");

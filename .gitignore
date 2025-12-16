@@ -47,3 +47,6 @@ docs/TECHNICAL_DOCUMENT.md
 docs/assistant_ddl.sql
 docs/ASSISTANT_EPICS.md
 docs/ASSISTANT_IMPROVEMENTS.md
+docs/assistant/01-resumen-general.md
+docs/assistant/02-arquitectura-tecnica.md
+docs/assistant/03-guion-presentacion.md
