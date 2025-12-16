@@ -10,7 +10,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import java.math.BigDecimal;
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -50,10 +50,10 @@ public class User implements UserDetails {
     private String telegramUsername;
 
     @Column(name = "\"CreatedAt\"")
-    private OffsetDateTime createdAt;
+    private LocalDateTime createdAt;
 
     @Column(name = "\"UpdatedAt\"")
-    private OffsetDateTime updatedAt;
+    private LocalDateTime updatedAt;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "\"Provider\"", length = 50)
@@ -99,8 +99,8 @@ public class User implements UserDetails {
 
     @PrePersist
     protected void onCreate() {
-        createdAt = OffsetDateTime.now();
-        updatedAt = OffsetDateTime.now();
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
         if (currentBalance == null) {
             currentBalance = BigDecimal.ZERO;
         }
@@ -108,6 +108,6 @@ public class User implements UserDetails {
 
     @PreUpdate
     protected void onUpdate() {
-        updatedAt = OffsetDateTime.now();
+        updatedAt = LocalDateTime.now();
     }
 }
