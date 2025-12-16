@@ -105,6 +105,8 @@ jobs:
               -e "spring.security.oauth2.client.provider.microsoft.user-name-attribute=id" \
               -e "spring.jpa.hibernate.naming.physical-strategy=${{ secrets.JPA_NAMING_PHYSICAL_STRATEGY }}" \
               -e "spring.jpa.hibernate.naming.implicit-strategy=${{ secrets.JPA_NAMING_IMPLICIT_STRATEGY }}" \
+              -e "server.forward-headers-strategy=FRAMEWORK" \
+              -e "server.use-forward-headers=true" \
               --memory="512m" \
               --cpus="0.75" \
               ${{ env.DOCKER_IMAGE }}:latest
