@@ -1,0 +1,596 @@
+package com.avaricia.sb_service.assistant.service;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.avaricia.sb_service.assistant.dto.ConfirmationIntent;
+import com.avaricia.sb_service.assistant.dto.IntentResult;
+import com.avaricia.sb_service.assistant.dto.PendingAction;
+import com.avaricia.sb_service.assistant.dto.PendingBatchAction;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Service that processes user messages and coordinates actions.
+ * Acts as the main orchestrator between intent classification and specialized handlers.
+ * 
+ * REFACTORED: Now delegates to specialized services:
+ * - TransactionHandlerService: Handles all transaction operations
+ * - RuleHandlerService: Handles financial rules (limits/budgets)
+ * - QueryHandlerService: Handles balance and summary queries
+ * - ResponseFormatterService: Handles response formatting utilities
+ * - ConfirmationService: Handles confirmation for high-value transactions
+ */
+@Service
+public class MessageProcessorService {
+
+    private static final Logger log = LoggerFactory.getLogger(MessageProcessorService.class);
+
+    private final IntentClassifierService intentClassifier;
+    private final UserMappingService userMapping;
+    private final ConversationHistoryService conversationHistory;
+    
+    // Specialized handlers
+    private final TransactionHandlerService transactionHandler;
+    private final RuleHandlerService ruleHandler;
+    private final QueryHandlerService queryHandler;
+    private final ResponseFormatterService formatter;
+    private final ConfirmationService confirmationService;
+    
+    // API services (needed for validate_expense which is complex)
+    private final CoreApiService coreApi;
+    private final MockCoreApiService mockCoreApi;
+    private final boolean useMock;
+
+    public MessageProcessorService(
+            IntentClassifierService intentClassifier,
+            UserMappingService userMapping,
+            ConversationHistoryService conversationHistory,
+            TransactionHandlerService transactionHandler,
+            RuleHandlerService ruleHandler,
+            QueryHandlerService queryHandler,
+            ResponseFormatterService formatter,
+            ConfirmationService confirmationService,
+            CoreApiService coreApi,
+            MockCoreApiService mockCoreApi,
+            @Value("${ms.core.use-mock:false}") boolean useMock) {
+        this.intentClassifier = intentClassifier;
+        this.userMapping = userMapping;
+        this.conversationHistory = conversationHistory;
+        this.transactionHandler = transactionHandler;
+        this.ruleHandler = ruleHandler;
+        this.queryHandler = queryHandler;
+        this.formatter = formatter;
+        this.confirmationService = confirmationService;
+        this.coreApi = coreApi;
+        this.mockCoreApi = mockCoreApi;
+        this.useMock = useMock;
+        
+        if (useMock) {
+            log.info("⚠️ MOCK MODE ENABLED - Using MockCoreApiService instead of real API");
+        }
+    }
+
+    /**
+     * Processes a user message and returns the response.
+     * Supports multiple operations in a single message.
+     * 
+     * First checks if there's a pending confirmation for high-value transactions.
+     * 
+     * @param telegramId The Telegram user ID
+     * @param message The message sent by the user
+     * @return The response message to send back to the user
+     */
+    public String processMessage(Long telegramId, String message) {
+        // 1. Get or create the userId for this Telegram user
+        String userId = userMapping.getUserId(telegramId);
+        log.info("📨 Processing message from Telegram ID: {} (User ID: {})", telegramId, userId);
+        
+        // 2. Check if user has a pending confirmation
+        String confirmationResponse = handlePendingConfirmation(telegramId, message);
+        if (confirmationResponse != null) {
+            conversationHistory.addUserMessage(telegramId, message);
+            conversationHistory.addAssistantMessage(telegramId, confirmationResponse);
+            return confirmationResponse;
+        }
+        
+        // 3. Classify the message intent(s) WITH conversation context
+        List<IntentResult> intents = intentClassifier.classifyIntent(message, telegramId);
+        log.debug("🎯 Detected {} intent(s): {}", intents.size(), intents);
+        
+        // 4. Save user message to history
+        conversationHistory.addUserMessage(telegramId, message);
+        
+        // 5. Execute the corresponding action(s)
+        String response;
+        String mainIntent = intents.get(0).getIntent();
+        if (intents.size() == 1) {
+            // Single operation - pass telegramId for confirmation support
+            response = executeIntent(userId, intents.get(0), telegramId);
+        } else {
+            // Multiple operations - execute each and combine responses
+            response = executeMultipleIntents(userId, intents, telegramId);
+        }
+        
+        // 6. Humanize the response using AI (for data-rich responses)
+        response = humanizeIfNeeded(response, message, mainIntent);
+        
+        // 7. Save assistant response to history
+        conversationHistory.addAssistantMessage(telegramId, response);
+        
+        log.debug("💬 Conversation history size: {} messages", conversationHistory.getHistorySize(telegramId));
+        
+        return response;
+    }
+
+    /**
+     * Handles pending confirmation for high-value transactions (single or batch).
+     * 
+     * @param telegramId The Telegram user ID
+     * @param message The user's message
+     * @return Response if confirmation was handled, null if no pending confirmation
+     */
+    private String handlePendingConfirmation(Long telegramId, String message) {
+        // Check if user has any pending action (single or batch)
+        if (!confirmationService.hasAnyPendingAction(telegramId)) {
+            return null;
+        }
+        
+        log.debug("⏳ User {} has pending confirmation, checking response: '{}'", telegramId, message);
+        
+        // Use hybrid classification (fast regex + AI fallback)
+        ConfirmationIntent intent = confirmationService.classifyConfirmationIntent(message);
+        
+        switch (intent) {
+            case CONFIRM -> {
+                // Try single action first
+                Optional<PendingAction> singleActionOpt = confirmationService.confirmAction(telegramId);
+                if (singleActionOpt.isPresent()) {
+                    PendingAction action = singleActionOpt.get();
+                    String type = "create_expense".equals(action.getActionType()) ? "Expense" : "Income";
+                    log.info("✅ User {} confirmed high-value transaction: {} of ${}",
+                        telegramId, type, String.format("%,.0f", action.getIntent().getAmount()));
+                    return transactionHandler.executeTransaction(action.getUserId(), action.getIntent(), type);
+                }
+                
+                // Try batch action
+                Optional<PendingBatchAction> batchActionOpt = confirmationService.confirmBatchAction(telegramId);
+                if (batchActionOpt.isPresent()) {
+                    PendingBatchAction batchAction = batchActionOpt.get();
+                    log.info("✅ User {} confirmed batch of {} high-value transactions",
+                        telegramId, batchAction.size());
+                    return executeBatchAction(batchAction);
+                }
+                
+                return confirmationService.getExpiredMessage();
+            }
+            
+            case CANCEL -> {
+                confirmationService.cancelAction(telegramId);
+                log.info("❌ User {} cancelled pending transaction(s)", telegramId);
+                return confirmationService.getCancellationMessage();
+            }
+            
+            case UNCLEAR -> {
+                // Message is neither confirmation nor cancellation - clear pending and process normally
+                log.debug("🔄 User {} sent unclear message, clearing pending confirmation", telegramId);
+                confirmationService.cancelAction(telegramId);
+                return null;
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Executes all transactions in a confirmed batch action.
+     * 
+     * @param batchAction The confirmed batch action
+     * @return Response message with results
+     */
+    private String executeBatchAction(PendingBatchAction batchAction) {
+        StringBuilder response = new StringBuilder();
+        response.append("✅ *¡Operaciones confirmadas!*\n\n");
+        
+        int successCount = 0;
+        int failCount = 0;
+        StringBuilder details = new StringBuilder();
+        
+        for (PendingBatchAction.BatchItem item : batchAction.getItems()) {
+            try {
+                String result = transactionHandler.executeTransaction(
+                    batchAction.getUserId(), item.getIntent(), item.getType());
+                
+                if (result.startsWith("❌")) {
+                    failCount++;
+                    details.append(String.format("❌ $%,.0f - %s - Error\n",
+                        item.getIntent().getAmount(),
+                        item.getIntent().getDescription() != null ? item.getIntent().getDescription() : item.getIntent().getCategory()));
+                } else {
+                    successCount++;
+                    String emoji = "Expense".equals(item.getType()) ? "💸" : "💰";
+                    details.append(String.format("%s $%,.0f - %s ✓\n",
+                        emoji,
+                        item.getIntent().getAmount(),
+                        item.getIntent().getDescription() != null ? item.getIntent().getDescription() : item.getIntent().getCategory()));
+                }
+            } catch (Exception e) {
+                failCount++;
+                log.error("❌ Error executing batch item: {}", e.getMessage());
+                details.append(String.format("❌ Error: %s\n", e.getMessage()));
+            }
+        }
+        
+        response.append(details);
+        response.append("\n");
+        
+        if (failCount == 0) {
+            response.append(String.format("📊 *Total:* %d operación(es) registrada(s)", successCount));
+        } else {
+            response.append(String.format("⚠️ *Resultado:* %d exitosa(s), %d fallida(s)", successCount, failCount));
+        }
+        
+        return response.toString();
+    }
+    
+    /**
+     * Humanizes the response if it's a data-rich response that could benefit from a more conversational tone.
+     */
+    private String humanizeIfNeeded(String response, String userQuery, String intent) {
+        List<String> humanizeIntents = List.of(
+            "get_balance", 
+            "get_summary", 
+            "list_transactions", 
+            "list_transactions_by_range",
+            "list_transactions_by_date",
+            "search_transactions",
+            "list_rules"
+        );
+        
+        String queryLower = userQuery != null ? userQuery.toLowerCase() : "";
+        boolean isFilteredQuery = queryLower.contains("ingreso") || 
+                                   queryLower.contains("gané") || 
+                                   queryLower.contains("ganancia") ||
+                                   queryLower.contains("recibí") ||
+                                   (queryLower.contains("cuánto") && queryLower.contains("gan"));
+        
+        // Don't humanize filtered queries to avoid mixing data
+        if (isFilteredQuery && ("list_transactions_by_range".equals(intent) || 
+                                "list_transactions".equals(intent))) {
+            log.debug("⏭️ Skipping humanization for filtered query: {}", userQuery);
+            return response;
+        }
+        
+        // Only humanize for specific intents and non-error responses
+        if (intent != null && humanizeIntents.contains(intent) && !response.startsWith("❌") && response.length() > 50) {
+            try {
+                return intentClassifier.humanizeResponse(response, userQuery, intent);
+            } catch (Exception e) {
+                log.warn("⚠️ Humanization failed, using original response: {}", e.getMessage());
+                return response;
+            }
+        }
+        
+        return response;
+    }
+    
+    /**
+     * Executes multiple intents and combines the responses.
+     * If any transaction exceeds the confirmation threshold, requests batch confirmation.
+     */
+    private String executeMultipleIntents(String userId, List<IntentResult> intents, Long telegramId) {
+        // Filter only transaction intents for batch confirmation check
+        List<IntentResult> transactionIntents = intents.stream()
+            .filter(intent -> "create_expense".equals(intent.getIntent()) || 
+                             "create_income".equals(intent.getIntent()))
+            .filter(intent -> intent.getAmount() != null && intent.getAmount() > 0)
+            .toList();
+        
+        // Check if any transaction requires confirmation
+        if (confirmationService.batchRequiresConfirmation(transactionIntents) && telegramId != null) {
+            log.info("⚠️ Batch contains high-value transactions - requesting confirmation");
+            return confirmationService.createPendingBatchAction(transactionIntents, userId, telegramId);
+        }
+        
+        // No high-value transactions - execute directly
+        return executeMultipleIntentsDirectly(userId, intents, telegramId);
+    }
+
+    /**
+     * Executes multiple intents directly without confirmation.
+     * Used when no high-value transactions are present or after confirmation.
+     */
+    private String executeMultipleIntentsDirectly(String userId, List<IntentResult> intents, Long telegramId) {
+        StringBuilder combinedResponse = new StringBuilder();
+        
+        // Count valid operations (those with amount > 0)
+        // Count valid operations (those with amount > 0)
+        int validOperationCount = 0;
+        for (IntentResult intent : intents) {
+            Double amount = intent.getAmount();
+            if (amount != null && amount > 0) {
+                validOperationCount++;
+            }
+        }
+        
+        combinedResponse.append("📝 *Registrando ").append(validOperationCount).append(" operaciones:*\n\n");
+        
+        // List all valid operations before executing
+        int opNumber = 0;
+        for (IntentResult intent : intents) {
+            String intentType = intent.getIntent();
+            String type = "create_expense".equals(intentType) ? "Expense" : "Income";
+            String emoji = formatter.getOperationEmoji(type);
+            String typeText = formatter.getOperationTypeText(type);
+            Double amount = intent.getAmount();
+            String description = intent.getDescription() != null ? intent.getDescription() : intent.getCategory();
+            
+            if (amount != null && amount > 0) {
+                opNumber++;
+                combinedResponse.append(String.format("%d. %s %s de $%,.0f", opNumber, emoji, typeText, amount));
+                if (description != null && !description.isEmpty()) {
+                    combinedResponse.append(" - ").append(description);
+                }
+                combinedResponse.append("\n");
+            }
+        }
+        combinedResponse.append("\n");
+        
+        // Execute all operations
+        int successCount = 0;
+        int failCount = 0;
+        StringBuilder errors = new StringBuilder();
+        
+        for (int i = 0; i < intents.size(); i++) {
+            IntentResult intent = intents.get(i);
+            log.debug("🔄 Executing operation {}/{}: {}", i + 1, intents.size(), intent.getIntent());
+            
+            try {
+                String result = executeIntentSilent(userId, intent, telegramId);
+                if (result.startsWith("❌")) {
+                    failCount++;
+                    errors.append("❌ Op ").append(i + 1).append(": ").append(result).append("\n");
+                } else {
+                    successCount++;
+                }
+            } catch (Exception e) {
+                failCount++;
+                errors.append("❌ Error en operación ").append(i + 1).append(": ").append(e.getMessage()).append("\n");
+            }
+        }
+        
+        // Add errors if any
+        if (errors.length() > 0) {
+            combinedResponse.append(errors);
+        }
+        
+        // Add summary at the end
+        if (failCount == 0) {
+            combinedResponse.append("✅ ¡").append(successCount).append(" operación(es) registrada(s) exitosamente!");
+        } else {
+            combinedResponse.append("⚠️ ").append(successCount).append(" exitosa(s), ").append(failCount).append(" fallida(s).");
+        }
+        
+        return combinedResponse.toString().trim();
+    }
+    
+    /**
+     * Executes an intent without adding the full response message (for batch processing).
+     * Uses silent transaction creation that skips confirmation for batch mode.
+     */
+    private String executeIntentSilent(String userId, IntentResult intent, Long telegramId) {
+        switch (intent.getIntent()) {
+            case "create_expense":
+                return transactionHandler.handleCreateTransactionSilent(userId, intent, "Expense");
+            case "create_income":
+                return transactionHandler.handleCreateTransactionSilent(userId, intent, "Income");
+            default:
+                return executeIntent(userId, intent, telegramId);
+        }
+    }
+
+    /**
+     * Executes the action based on the classified intent.
+     * Delegates to specialized handler services.
+     * 
+     * @param userId The system user ID
+     * @param intent The classified intent
+     * @param telegramId The Telegram user ID (for confirmation support)
+     */
+    private String executeIntent(String userId, IntentResult intent, Long telegramId) {
+        try {
+            String intentType = intent.getIntent();
+            if (intentType == null) {
+                return intent.getResponse() != null ? intent.getResponse() : 
+                       "¡Hola! Soy tu asistente financiero. ¿En qué puedo ayudarte?";
+            }
+            
+            return switch (intentType) {
+                // Validate expense is special - stays here due to complexity
+                case "validate_expense" -> handleValidateExpense(userId, intent);
+                
+                // Transaction operations - delegated to TransactionHandlerService
+                // Pass telegramId for confirmation support on high-value transactions
+                case "create_expense" -> transactionHandler.handleCreateTransaction(userId, intent, "Expense", telegramId);
+                case "create_income" -> transactionHandler.handleCreateTransaction(userId, intent, "Income", telegramId);
+                case "list_transactions" -> transactionHandler.handleListTransactions(userId, intent);
+                case "list_transactions_by_date" -> transactionHandler.handleListTransactionsByDate(userId, intent);
+                case "list_transactions_by_range" -> transactionHandler.handleListTransactionsByRange(userId, intent);
+                case "search_transactions" -> transactionHandler.handleSearchTransactions(userId, intent);
+                case "delete_transaction" -> transactionHandler.handleDeleteTransaction(userId);
+                
+                // Query operations - delegated to QueryHandlerService
+                case "get_balance" -> queryHandler.handleGetBalance(userId);
+                case "get_summary" -> queryHandler.handleGetSummary(userId, intent);
+                // Rule operations - delegated to RuleHandlerService
+                case "create_rule" -> ruleHandler.handleCreateRule(userId, intent);
+                case "list_rules" -> ruleHandler.handleListRules(userId);
+                
+                // Default/Question - return AI response
+                default -> intent.getResponse() != null ? intent.getResponse() : 
+                           "¡Hola! Soy tu asistente financiero. ¿En qué puedo ayudarte?";
+            };
+        } catch (Exception e) {
+            System.err.println("Error executing intent: " + e.getMessage());
+            return "Lo siento, hubo un error procesando tu solicitud. Por favor intenta de nuevo.";
+        }
+    }
+
+    /**
+     * Handles expense validation/consultation requests.
+     * This ONLY provides advice - it does NOT register any transaction.
+     * The user is just ASKING if they can spend, not confirming they spent.
+     * 
+     * Note: This method stays in MessageProcessorService due to its complexity
+     * and need to access multiple services (transactions, rules, formatting).
+     */
+    @SuppressWarnings("unchecked")
+    private String handleValidateExpense(String userId, IntentResult intent) {
+        // Get user's transaction history
+        Map<String, Object> transactionsResult = transactionHandler.getTransactionsForUser(userId);
+        
+        // Get user's rules
+        List<Map<String, Object>> rules = ruleHandler.getRulesForUser(userId);
+        
+        StringBuilder response = new StringBuilder();
+        
+        // Handle null/missing amount
+        Double amount = intent.getAmount();
+        if (amount == null || amount <= 0) {
+            return "🤔 ¿Cuánto estás pensando gastar? Por favor especifica el monto.\n\n" +
+                   "💡 Ejemplo: \"¿Puedo gastar 50000 en ropa?\"";
+        }
+        
+        // Handle null/missing/ambiguous category
+        String category = intent.getCategory();
+        String description = intent.getDescription();
+        
+        boolean isAmbiguousCategory = category == null || category.isEmpty() || 
+            category.equalsIgnoreCase("null") ||
+            category.equalsIgnoreCase("eso") ||
+            category.equalsIgnoreCase("esto") ||
+            category.equalsIgnoreCase("aquello") ||
+            category.equalsIgnoreCase("Otros");
+        
+        boolean isAmbiguousDescription = description == null || description.isEmpty() ||
+            description.equalsIgnoreCase("esto") ||
+            description.equalsIgnoreCase("eso") ||
+            description.equalsIgnoreCase("aquello") ||
+            description.equalsIgnoreCase("algo");
+        
+        // If both category and description are ambiguous, ask for clarification
+        if (isAmbiguousCategory && isAmbiguousDescription) {
+            return String.format(
+                "🤔 ¿Gastar $%,.0f en *qué* exactamente?\n\n" +
+                "💡 Necesito saber en qué quieres gastar para darte una mejor recomendación.\n\n" +
+                "Por ejemplo:\n" +
+                "• \"¿Puedo gastar $%,.0f en ropa?\"\n" +
+                "• \"¿Me alcanza para una cena de $%,.0f?\"\n" +
+                "• \"¿Debería gastar $%,.0f en entretenimiento?\"",
+                amount, amount, amount, amount
+            );
+        }
+        
+        // Use description as category if category is ambiguous but description is clear
+        if (isAmbiguousCategory && !isAmbiguousDescription) {
+            category = description;
+        }
+        
+        response.append("🤔 *Sobre gastar $").append(String.format("%,.0f", amount));
+        response.append(" en ").append(category).append(":*\n\n");
+        
+        // Check if user has rules for this category
+        boolean hasRule = false;
+        Double categoryLimit = null;
+        String rulePeriod = null;
+        
+        for (Map<String, Object> rule : rules) {
+            String ruleCategory = (String) rule.get("category");
+            if (ruleCategory != null && 
+                (ruleCategory.equalsIgnoreCase(category) || ruleCategory.equalsIgnoreCase("General"))) {
+                hasRule = true;
+                categoryLimit = ((Number) rule.get("amountLimit")).doubleValue();
+                rulePeriod = (String) rule.get("period");
+                break;
+            }
+        }
+        
+        if (hasRule && categoryLimit != null) {
+            // User has a budget rule for this category
+            double spentInCategory = transactionHandler.calculateSpentInPeriod(userId, category, rulePeriod, transactionsResult);
+            double remainingBudget = categoryLimit - spentInCategory;
+            double percentUsed = (spentInCategory / categoryLimit) * 100;
+            String periodText = formatter.translatePeriod(rulePeriod);
+            
+            response.append("📏 *Tu presupuesto ").append(periodText.toLowerCase()).append(" para ").append(category).append(":*\n");
+            response.append("• Límite: $").append(String.format("%,.0f", categoryLimit)).append("\n");
+            response.append("• Ya gastaste: $").append(String.format("%,.0f", spentInCategory));
+            response.append(" (").append(String.format("%.0f", percentUsed)).append("%)\n");
+            response.append("• Disponible: $").append(String.format("%,.0f", Math.max(0, remainingBudget))).append("\n\n");
+            
+            if (amount > remainingBudget) {
+                // Would exceed the remaining budget
+                if (remainingBudget <= 0) {
+                    response.append("🚫 *¡Ya agotaste tu presupuesto ").append(periodText.toLowerCase()).append("!*\n\n");
+                    response.append("💡 *Recomendación:* Este gasto de $").append(String.format("%,.0f", amount));
+                    response.append(" excedería tu límite por $").append(String.format("%,.0f", amount - remainingBudget)).append(".\n");
+                    response.append("Considera esperar al próximo período o ajustar tu presupuesto.");
+                } else {
+                    response.append("⚠️ *Este gasto excedería tu presupuesto disponible.*\n\n");
+                    response.append("💡 *Recomendación:* Solo te quedan $").append(String.format("%,.0f", remainingBudget));
+                    response.append(" disponibles. Este gasto de $").append(String.format("%,.0f", amount));
+                    response.append(" te dejaría $").append(String.format("%,.0f", amount - remainingBudget)).append(" por encima del límite.\n\n");
+                    response.append("Podrías:\n");
+                    response.append("• Gastar máximo $").append(String.format("%,.0f", remainingBudget)).append("\n");
+                    response.append("• Esperar al próximo período\n");
+                    response.append("• Ajustar tu presupuesto si realmente lo necesitas");
+                }
+            } else if (amount > remainingBudget * 0.8) {
+                // Would use more than 80% of remaining budget
+                response.append("⚡ *Está dentro del presupuesto, pero ajustado.*\n\n");
+                response.append("💡 *Recomendación:* Después de este gasto te quedarían solo $");
+                response.append(String.format("%,.0f", remainingBudget - amount)).append(" para el resto del período.\n\n");
+                String whatToSay = description != null ? description : category;
+                response.append("Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", amount));
+                response.append(" en ").append(whatToSay).append("\"");
+            } else {
+                // Comfortable within budget
+                response.append("✅ *¡Está dentro de tu presupuesto!*\n\n");
+                response.append("💡 Después de este gasto aún te quedarían $");
+                response.append(String.format("%,.0f", remainingBudget - amount)).append(" disponibles.\n\n");
+                String whatToSay = description != null ? description : category;
+                response.append("Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", amount));
+                response.append(" en ").append(whatToSay).append("\"");
+            }
+        } else {
+            // No specific rule - provide general advice
+            double spentInCategory = transactionHandler.calculateSpentInPeriod(userId, category, "Monthly", transactionsResult);
+            
+            if (spentInCategory > 0) {
+                response.append("📊 *No tienes un límite para ").append(category).append("*, pero este mes ya gastaste $");
+                response.append(String.format("%,.0f", spentInCategory)).append(" en esta categoría.\n\n");
+                response.append("Con este gasto de $").append(String.format("%,.0f", amount));
+                response.append(" llevarías $").append(String.format("%,.0f", spentInCategory + amount)).append(" ").append(category.toLowerCase()).append(".\n\n");
+            } else {
+                response.append("📊 No tienes un límite configurado para ").append(category).append(".\n\n");
+            }
+            
+            response.append("💡 *Antes de gastar, considera:*\n");
+            response.append("• ¿Es una necesidad o un gusto?\n");
+            response.append("• ¿Afecta tus metas de ahorro?\n");
+            response.append("• ¿Quieres establecer un límite para esta categoría?\n\n");
+            
+            String whatToSay = description != null ? description : category;
+            response.append("Si decides hacerlo, dime: \"Gasté $").append(String.format("%,.0f", amount));
+            response.append(" en ").append(whatToSay).append("\"");
+        }
+        
+        String modeIndicator = formatter.getMockIndicator(useMock);
+        
+        return response.toString() + modeIndicator;
+    }
+}

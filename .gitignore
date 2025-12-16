@@ -31,4 +31,22 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Environment files ###
+.env
+*.env
+application-local.properties
 src/main/resources/application.properties
+docs/USER_STORIES_ASSISTANT.md
+docs/TEST_CHAT_FLOW.md
+docs/CAMBIOS_MS_CORE_BRAHIAM.md
+
+docs_v2/
+docs/EPICS_FEATURES_USER_STORIES.md
+docs/TECHNICAL_DOCUMENT.md
+docs/assistant_ddl.sql
+docs/ASSISTANT_EPICS.md
+docs/ASSISTANT_IMPROVEMENTS.md
+docs/assistant/01-resumen-general.md
+docs/assistant/02-arquitectura-tecnica.md
+docs/assistant/03-guion-presentacion.md

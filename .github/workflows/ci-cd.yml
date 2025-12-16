@@ -1,0 +1,133 @@
+name: CI/CD - Chatbot Spring Boot
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/riwiwallet-chatbot
+  CONTAINER_NAME: riwiwallet_chatbot
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_TAG="${{ github.sha }}"
+          
+          echo "Building image..."
+          docker build -t ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG .
+          docker build -t ${{ env.DOCKER_IMAGE }}:latest .
+          
+          echo "Pushing to Docker Hub..."
+          docker push ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG
+          docker push ${{ env.DOCKER_IMAGE }}:latest
+          
+          echo "Image pushed: ${{ env.DOCKER_IMAGE }}:$IMAGE_TAG"
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "Starting Chatbot deployment..."
+            
+            # Stop and remove previous container
+            docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            
+            # Download new image
+            docker pull ${{ env.DOCKER_IMAGE }}:latest
+            
+            # Start new container (with all variables)
+            docker run -d \
+              --name ${{ env.CONTAINER_NAME }} \
+              --restart always \
+              --network riwi_network \
+              -p 5002:8080 \
+              -e SPRING_PROFILES_ACTIVE=production \
+              -e "spring.application.name=riwi-wallet-chatbot" \
+              -e "spring.ai.openai.api-key=${{ secrets.OPENAI_API_KEY }}" \
+              -e "spring.ai.openai.chat.options.model=${{ secrets.OPENAI_MODEL }}" \
+              -e "telegram.bot.token=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+              -e "whatsapp.access.token=${{ secrets.WHATSAPP_ACCESS_TOKEN }}" \
+              -e "whatsapp.phone.number.id=${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}" \
+              -e "whatsapp.verify.token=${{ secrets.WHATSAPP_VERIFY_TOKEN }}" \
+              -e "ms.core.base-url=http://netapi_gestor_finanzas:8080" \
+              -e "ms.core.use-mock=false" \
+              -e "ms.core.api-key=${{ secrets.MS_CORE_API_KEY }}" \
+              -e "app.frontend.url=${{ secrets.APP_FRONTEND_URL }}" \
+              -e "spring.datasource.url=jdbc:postgresql://${{ secrets.DB_HOST }}:${{ secrets.DB_PORT }}/${{ secrets.DB_NAME }}" \
+              -e "spring.datasource.driverClassName=org.postgresql.Driver" \
+              -e "spring.datasource.username=${{ secrets.DB_USER }}" \
+              -e "spring.datasource.password=${{ secrets.DB_PASSWORD }}" \
+              -e "spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect" \
+              -e "spring.jpa.hibernate.ddl-auto=update" \
+              -e "spring.jpa.show-sql=false" \
+              -e "jwt.secret=${{ secrets.JWT_SECRET }}" \
+              -e "jwt.expiration=${{ secrets.JWT_EXPIRATION }}" \
+              -e "spring.security.oauth2.client.registration.google.client-id=${{ secrets.GOOGLE_CLIENT_ID }}" \
+              -e "spring.security.oauth2.client.registration.google.client-secret=${{ secrets.GOOGLE_CLIENT_SECRET }}" \
+              -e "spring.security.oauth2.client.registration.google.scope=profile,email" \
+              -e "spring.security.oauth2.client.registration.google.redirect-uri={baseUrl}/login/oauth2/code/google" \
+              -e "spring.security.oauth2.client.registration.microsoft.client-id=${{ secrets.MICROSOFT_CLIENT_ID }}" \
+              -e "spring.security.oauth2.client.registration.microsoft.client-secret=${{ secrets.MICROSOFT_CLIENT_SECRET }}" \
+              -e "spring.security.oauth2.client.registration.microsoft.scope=openid,profile,email" \
+              -e "spring.security.oauth2.client.registration.microsoft.authorization-grant-type=authorization_code" \
+              -e "spring.security.oauth2.client.registration.microsoft.redirect-uri={baseUrl}/login/oauth2/code/microsoft" \
+              -e "spring.security.oauth2.client.registration.microsoft.client-name=Microsoft" \
+              -e "spring.security.oauth2.client.provider.microsoft.authorization-uri=https://login.microsoftonline.com/common/oauth2/v2.0/authorize" \
+              -e "spring.security.oauth2.client.provider.microsoft.token-uri=https://login.microsoftonline.com/common/oauth2/v2.0/token" \
+              -e "spring.security.oauth2.client.provider.microsoft.user-info-uri=https://graph.microsoft.com/v1.0/me" \
+              -e "spring.security.oauth2.client.provider.microsoft.jwk-set-uri=https://login.microsoftonline.com/common/discovery/v2.0/keys" \
+              -e "spring.security.oauth2.client.provider.microsoft.user-name-attribute=id" \
+              -e "spring.jpa.hibernate.naming.physical-strategy=${{ secrets.JPA_NAMING_PHYSICAL_STRATEGY }}" \
+              -e "spring.jpa.hibernate.naming.implicit-strategy=${{ secrets.JPA_NAMING_IMPLICIT_STRATEGY }}" \
+              -e "server.forward-headers-strategy=FRAMEWORK" \
+              -e "server.use-forward-headers=true" \
+              --memory="512m" \
+              --cpus="0.75" \
+              ${{ env.DOCKER_IMAGE }}:latest
+            
+            echo "Chatbot deployed successfully"
+            
+            # Wait for startup
+            echo "Waiting for container to start..."
+            sleep 15
+            
+            # Check status
+            if docker ps | grep -q ${{ env.CONTAINER_NAME }}; then
+              echo "Container running"
+              docker logs ${{ env.CONTAINER_NAME }} --tail 30
+            else
+              echo "ERROR: Container is not running"
+              docker logs ${{ env.CONTAINER_NAME }} --tail 50
+              exit 1
+            fi
+            
+            # Clean up old images
+            docker image prune -af --filter "until=24h"
+            
+            echo "Deployment completed"
