@@ -114,6 +114,15 @@ public class IntentClassifierService {
             
             Categorías válidas: Comida, Transporte, Entretenimiento, Salud, Educación, Hogar, Ropa, Tecnología, Servicios, Arriendo, Vivienda, Salario, Freelance, Inversiones, Regalos, Otros
             
+            ⚠️ REGLA CRÍTICA DE CATEGORÍAS:
+            - SIEMPRE usa EXACTAMENTE estas categorías, NO sinónimos
+            - "Alimentación", "Alimentos", "Comidas" → usar SIEMPRE "Comida"
+            - "Transporte", "Movilidad", "Viajes cortos" → usar SIEMPRE "Transporte"
+            - "Ocio", "Diversión" → usar SIEMPRE "Entretenimiento"
+            - Las categorías DEBEN ser idénticas tanto para transacciones como para reglas financieras
+            - Si el usuario dice "límite en alimentación", usar categoria: "Comida"
+            - Si el usuario dice "gasté en comida", usar categoria: "Comida"
+            
             CLASIFICACIÓN DE CATEGORÍAS - GASTOS:
             - COMIDA: almuerzo, desayuno, cena, restaurante, café, gaseosa, bebida, snack, pizza, hamburguesa, comida rápida, pan, postres, etc.
             - TRANSPORTE: taxi, Uber, bus, gasolina, parqueadero, moto, carro, cuota del carro, pasaje, vuelo, peajes, SOAT, etc.
